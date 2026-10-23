@@ -1,0 +1,142 @@
+@font-face {
+  font-family: "Kode Mono";
+  src: url("fonts/kode-mono.woff2") format("woff2");
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+.hiz-pwd-panel {
+  --content-pad: 16px;
+  --input-w: 280px;
+  --mono: "Kode Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  position: relative;
+  visibility: hidden;
+  box-sizing: border-box;
+  width: calc(var(--input-w) + 2 * var(--content-pad));
+  max-width: calc(100vw - 8px);
+  padding: var(--content-pad);
+  border-radius: 14px;
+  border: 1px solid rgba(142, 176, 255, 0.2);
+  background: #121018;
+  color: #f3f1eb;
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.hiz-pwd-panel label {
+  display: block;
+  margin: 0 0 0.35rem 0;
+  padding-left: var(--content-pad);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a8b6de;
+}
+
+.hiz-pwd-panel input[type="text"] {
+  display: block;
+  width: var(--input-w);
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.75rem var(--content-pad);
+  border: 1px solid rgba(142, 176, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(142, 176, 255, 0.065);
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+
+.hiz-pwd-panel input[type="text"]:focus {
+  border-color: rgba(122, 156, 232, 0.48);
+  box-shadow: 0 0 0 1px rgba(90, 111, 184, 0.35);
+}
+
+.hiz-pwd-phrase {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+.hiz-pwd-site {
+  margin: 0.35rem 0 0;
+  padding: 0 0 0 var(--content-pad);
+  color: rgba(142, 176, 255, 0.55);
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.hiz-pwd-result {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 0.65rem 0 0;
+  min-height: 1.5rem;
+}
+
+.hiz-pwd-password {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0.2rem var(--content-pad);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+  line-height: 1.35;
+  word-break: break-all;
+  color: #f3f1eb;
+  cursor: pointer;
+  user-select: all;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+
+.hiz-pwd-password::selection {
+  background: rgba(90, 111, 184, 0.45);
+  color: #f3f1eb;
+}
+
+.hiz-pwd-password.is-click-flash {
+  background: rgba(90, 111, 184, 0.35);
+}
+
+.hiz-pwd-password.is-pending {
+  color: #a8b6de;
+  font-family: inherit;
+  font-size: 0.85rem;
+  letter-spacing: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.hiz-pwd-check {
+  position: absolute;
+  top: 50%;
+  right: var(--content-pad);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.hiz-pwd-check[hidden] {
+  display: none !important;
+}
+
+.hiz-pwd-check svg {
+  width: 1.2rem;
+  height: 1.2rem;
+  display: block;
+}
+
+.hiz-pwd-error {
+  margin: 0.5rem 0 0;
+  padding-left: var(--content-pad);
+  font-size: 0.8rem;
+  color: #e7b2a2;
+}

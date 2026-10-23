@@ -8,6 +8,11 @@ const dist = join(root, "dist");
 
 mkdirSync(dist, { recursive: true });
 mkdirSync(join(dist, "icons"), { recursive: true });
+mkdirSync(join(dist, "fonts"), { recursive: true });
+copyFileSync(
+  join(root, "node_modules/@fontsource/kode-mono/files/kode-mono-latin-400-normal.woff2"),
+  join(dist, "fonts/kode-mono.woff2"),
+);
 
 await esbuild.build({
   entryPoints: [join(root, "src/content/main.js")],
@@ -21,6 +26,7 @@ await esbuild.build({
 });
 
 copyFileSync(join(root, "src/content/content.css"), join(dist, "content.css"));
+copyFileSync(join(root, "src/content/panel.css"), join(dist, "panel.css"));
 copyFileSync(join(root, "manifest.json"), join(dist, "manifest.json"));
 for (const name of ["icon-16.png", "icon-48.png", "icon-128.png"]) {
   copyFileSync(join(root, "icons", name), join(dist, "icons", name));

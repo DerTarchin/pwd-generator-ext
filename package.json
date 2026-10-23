@@ -6,12 +6,15 @@
   "description": "Chrome extension for hiz.al deterministic passwords",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node scripts/build.mjs && node scripts/test-crypto.mjs && node scripts/test-extension.mjs"
+    "test": "node scripts/build.mjs && node scripts/test-crypto.mjs && node scripts/test-extension.mjs",
+    "test:schwab": "node scripts/build.mjs && node scripts/test-schwab.mjs",
+    "test:chase": "node scripts/build.mjs && node scripts/test-chase.mjs"
   },
   "dependencies": {
     "hash-wasm": "^4.12.0"
   },
   "devDependencies": {
+    "@fontsource/kode-mono": "^5.2.5",
     "esbuild": "^0.25.0",
     "playwright": "^1.51.0"
   }

@@ -48,7 +48,8 @@ await page.click(".hiz-pwd-anchor");
 await page.fill("#hiz-pwd-phrase", "test-passphrase");
 await page.waitForFunction(
   () => {
-    const el = document.querySelector("#hiz-pwd-out");
+    const host = document.querySelector(".hiz-pwd-panel-host");
+    const el = host?.shadowRoot?.querySelector("#hiz-pwd-out");
     return (
       el &&
       el.textContent &&
@@ -64,6 +65,22 @@ if (password !== expectedPassword) {
   throw new Error(`fill mismatch: got ${password}, expected ${expectedPassword}`);
 }
 console.log("extension e2e ok", { siteKey: site.siteKey, filled: password.length });
+
+await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
+await page.click(".hiz-pwd-anchor");
+await page.fill("#hiz-pwd-phrase", "test-passphrase");
+await page.keyboard.press("Enter");
+await page.waitForFunction(
+  () => !document.querySelector(".hiz-pwd-panel-host"),
+  { timeout: 120000 },
+);
+await page.waitForTimeout(50);
+const passwordEnter = await page.inputValue("#pw");
+if (passwordEnter !== expectedPassword) {
+  throw new Error(`enter fill mismatch: ${passwordEnter}`);
+}
+console.log("extension enter e2e ok");
 
 await contextWithExt.close();
 server.close();
