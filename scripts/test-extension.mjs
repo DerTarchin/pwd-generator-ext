@@ -15,6 +15,7 @@ const chromeExecutable = ensureChrome133();
 const FIXTURE_HTML = `<!DOCTYPE html>
 <html><head><title>fixture</title></head><body>
 <form>
+<label>Email <input id="email" name="email" type="email" /></label>
 <label>Password <input id="pw" type="password" name="password" /></label>
 </form>
 </body></html>`;

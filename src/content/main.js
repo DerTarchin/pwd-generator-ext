@@ -1,6 +1,13 @@
 import { generatePassword } from "../lib/crypto.js";
 import { resolveSiteFromHostname } from "../lib/site-resolve.js";
 import { cleanHostInput, rowForInput } from "../lib/sites.js";
+import {
+  findPairedUsernameField,
+  getStoredUsername,
+  setStoredUsername,
+  inputDescriptor,
+  descriptorMatches,
+} from "../lib/username-memory.js";
 
 const ICON_URL = chrome.runtime.getURL("icons/icon-48.png");
 const PANEL_CSS_URL = chrome.runtime.getURL("panel.css");
@@ -43,6 +50,7 @@ const CHECKMARK_SVG = `
 
 const MSG = "hiz-pwd-ce";
 const tracked = new WeakSet();
+const usernameAutofillDone = new WeakSet();
 const anchors = new Map();
 const anchorBindings = new Map();
 const overlayByDoc = new WeakMap();
@@ -201,7 +209,11 @@ function installChildBridge() {
     const { type, fieldId, value } = event.data;
     const input = remoteInputs.get(fieldId);
     if (!input) return;
-    if (type === "fill" && typeof value === "string") fillInput(input, value);
+    if (type === "fill" && typeof value === "string") {
+      fillInput(input, value);
+      const siteKey = event.data.siteKey;
+      if (typeof siteKey === "string" && siteKey) void rememberUsernameForSite(input, siteKey);
+    }
     if (type === "submit-enter") submitPasswordField(input);
   });
 }
@@ -239,6 +251,9 @@ function attachRemoteToTop(input) {
   if (!remoteIntervals.has(fieldId)) {
     remoteIntervals.set(fieldId, window.setInterval(report, POSITION_POLL_MS));
   }
+
+  const site = resolveSiteFromHostname(location.hostname);
+  void autofillUsernameOnce(input, site.siteKey);
 }
 
 function keepOverlayOnTop(overlayDoc) {
@@ -392,6 +407,29 @@ function fillInput(input, value) {
   else input.value = value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+async function autofillUsernameOnce(passwordInput, siteKey) {
+  if (!siteKey || usernameAutofillDone.has(passwordInput)) return;
+  usernameAutofillDone.add(passwordInput);
+  const usernameEl = findPairedUsernameField(passwordInput, isPasswordField);
+  if (!usernameEl) return;
+  const stored = await getStoredUsername(siteKey);
+  if (!stored?.value) return;
+  if (usernameEl.value.trim()) return;
+  fillInput(usernameEl, stored.value);
+}
+
+async function rememberUsernameForSite(passwordInput, siteKey) {
+  if (!siteKey) return;
+  const usernameEl = findPairedUsernameField(passwordInput, isPasswordField);
+  if (!usernameEl) return;
+  const value = usernameEl.value.trim();
+  if (!value) return;
+  const descriptor = inputDescriptor(usernameEl);
+  const stored = await getStoredUsername(siteKey);
+  if (stored?.value === value && descriptorMatches(stored.descriptor, usernameEl)) return;
+  await setStoredUsername(siteKey, { value, descriptor });
 }
 
 function unlockPhraseInput(phraseEl) {
@@ -1038,6 +1076,7 @@ function openForField(input, options = {}) {
     enterEndTimer: 0,
     dismissDocs: null,
     reposition: null,
+    getSiteKey: () => siteKeyFromSiteEl(siteEl),
   };
 
   function scheduleApplyPassword(panelState, password) {
@@ -1052,10 +1091,15 @@ function openForField(input, options = {}) {
     if (!password || password === lastApplied) return;
     lastApplied = password;
     const { input, remote } = panelState;
+    const siteKey = panelState.getSiteKey?.() ?? site.siteKey;
     if (remote?.childWin) {
-      remote.childWin.postMessage({ source: MSG, type: "fill", fieldId: remote.fieldId, value: password }, "*");
+      remote.childWin.postMessage(
+        { source: MSG, type: "fill", fieldId: remote.fieldId, value: password, siteKey },
+        "*",
+      );
     } else if (input) {
       fillInput(input, password);
+      await rememberUsernameForSite(input, siteKey);
     }
     await copyText(password);
     showCopyCheck(panelState);
@@ -1256,6 +1300,9 @@ function attachToField(input) {
     event.stopPropagation();
     openForField(input);
   });
+
+  const site = resolveSiteFromHostname(location.hostname);
+  void autofillUsernameOnce(input, site.siteKey);
 }
 
 function scan() {
