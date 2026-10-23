@@ -1,0 +1,18 @@
+{
+  "name": "hiz-pwd-ce",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Chrome extension for hiz.al deterministic passwords",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs && node scripts/test-crypto.mjs && node scripts/test-extension.mjs"
+  },
+  "dependencies": {
+    "hash-wasm": "^4.12.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "playwright": "^1.51.0"
+  }
+}

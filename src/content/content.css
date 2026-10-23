@@ -1,0 +1,107 @@
+.hiz-pwd-anchor {
+  position: absolute;
+  z-index: 2147483646;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(18, 16, 24, 0.92);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hiz-pwd-anchor:hover {
+  background: rgba(40, 60, 134, 0.95);
+}
+
+.hiz-pwd-anchor img {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.hiz-pwd-panel {
+  position: absolute;
+  z-index: 2147483647;
+  width: min(18rem, calc(100vw - 16px));
+  padding: 0.85rem 0.9rem 0.95rem;
+  border-radius: 14px;
+  border: 1px solid rgba(142, 176, 255, 0.2);
+  background: #121018;
+  color: #f3f1eb;
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  box-sizing: border-box;
+}
+
+.hiz-pwd-panel label {
+  display: block;
+  margin: 0 0 0.35rem 0.1rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #a8b6de;
+}
+
+.hiz-pwd-panel label + label {
+  margin-top: 0.75rem;
+}
+
+.hiz-pwd-panel input[type="text"] {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(142, 176, 255, 0.2);
+  border-radius: 12px;
+  background: rgba(142, 176, 255, 0.065);
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+
+.hiz-pwd-panel input[type="text"]:focus {
+  border-color: rgba(122, 156, 232, 0.48);
+  box-shadow: 0 0 0 1px rgba(90, 111, 184, 0.35);
+}
+
+.hiz-pwd-phrase {
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
+.hiz-pwd-site {
+  color: rgba(142, 176, 255, 0.55);
+  font-size: 0.9rem;
+  padding: 0.55rem 0.1rem 0;
+  word-break: break-word;
+}
+
+.hiz-pwd-password {
+  margin: 0.75rem 0 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.95rem;
+  letter-spacing: 0.03em;
+  min-height: 1.35em;
+  word-break: break-all;
+  color: #f3f1eb;
+}
+
+.hiz-pwd-password.is-pending {
+  color: #a8b6de;
+  font-family: inherit;
+  font-size: 0.85rem;
+}
+
+.hiz-pwd-error {
+  margin: 0.5rem 0 0;
+  font-size: 0.8rem;
+  color: #e7b2a2;
+}

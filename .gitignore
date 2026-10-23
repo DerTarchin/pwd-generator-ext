@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.browsers/
+.keys/
+*.crx
+.DS_Store
+scripts/fixture.html
