@@ -58,6 +58,7 @@ const overlayWatchers = new WeakSet();
 const remoteInputs = new Map();
 const remoteIntervals = new Map();
 const topRemoteFields = new Map();
+const pendingRemotePanelOpens = new Set();
 let openPanel = null;
 let deriveSerial = 0;
 let globalRepositionInstalled = false;
@@ -134,6 +135,10 @@ function installTopBridge() {
       } catch {
         /* ignore */
       }
+      if (pendingRemotePanelOpens.has(fieldId)) {
+        pendingRemotePanelOpens.delete(fieldId);
+        openRemotePanelFromTop(fieldId);
+      }
       return;
     }
 
@@ -148,8 +153,35 @@ function installTopBridge() {
       entry.getRect = () => rectFromChildPayload(entry.childRect, entry.iframe);
       entry.lastRectKey = rectKey(entry.getRect());
       placeNearField(entry.anchor, entry.getRect, document.defaultView);
+      return;
+    }
+
+    if (type === "open-panel") {
+      queueRemotePanelOpen(fieldId, childWin, iframe);
     }
   });
+}
+
+function openRemotePanelFromTop(fieldId) {
+  const entry = topRemoteFields.get(fieldId);
+  if (!entry?.childWin) return;
+  if (openPanel?.remote?.fieldId === fieldId) return;
+  openForField(null, {
+    overlayDoc: document,
+    getRect: entry.getRect,
+    remote: { fieldId, childWin: entry.childWin },
+  });
+}
+
+function queueRemotePanelOpen(fieldId, childWin, iframe) {
+  let entry = topRemoteFields.get(fieldId);
+  if (!entry) ensureTopRemoteAnchor(fieldId, childWin, iframe);
+  entry = topRemoteFields.get(fieldId);
+  if (!entry?.childWin) {
+    pendingRemotePanelOpens.add(fieldId);
+    return;
+  }
+  openRemotePanelFromTop(fieldId);
 }
 
 function ensureTopRemoteAnchor(fieldId, childWin, iframe) {
@@ -418,7 +450,23 @@ async function autofillUsernameOnce(passwordInput, siteKey) {
   if (!stored?.value) return;
   if (usernameEl.value.trim()) return;
   fillInput(usernameEl, stored.value);
-  if (!passwordInput.isConnected || openPanel?.input === passwordInput) return;
+  requestOpenPanelAfterUsernameAutofill(passwordInput);
+}
+
+function requestOpenPanelAfterUsernameAutofill(passwordInput) {
+  if (!passwordInput?.isConnected) return;
+
+  if (isCrossOriginToTop()) {
+    const fieldId = passwordInput.dataset.hizPwdFieldId;
+    if (!fieldId) return;
+    const postOpen = () => {
+      window.top.postMessage({ source: MSG, type: "open-panel", fieldId }, "*");
+    };
+    requestAnimationFrame(() => requestAnimationFrame(postOpen));
+    return;
+  }
+
+  if (openPanel?.input === passwordInput) return;
   openForField(passwordInput);
 }
 
