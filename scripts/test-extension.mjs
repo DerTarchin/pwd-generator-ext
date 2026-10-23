@@ -59,6 +59,11 @@ await page.waitForFunction(
   },
   { timeout: 120000 },
 );
+await page.waitForFunction(
+  (expected) => document.querySelector("#pw")?.value === expected,
+  expectedPassword,
+  { timeout: 15000 },
+);
 
 const password = await page.inputValue("#pw");
 if (password !== expectedPassword) {

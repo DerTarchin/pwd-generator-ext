@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "hiz.al Password Generator",
+  "name": "Password Generator",
   "version": "1.0.0",
   "description": "Deterministic site passwords from your master passphrase (same as hiz.al/pwd).",
   "permissions": ["clipboardWrite"],

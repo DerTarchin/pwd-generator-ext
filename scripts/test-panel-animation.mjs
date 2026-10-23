@@ -10,7 +10,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const extPath = join(root, "dist");
 const chromeExecutable = ensureChrome133();
 
-const PANEL_ENTER_MS = Number(process.env.PANEL_ENTER_MS || "4000");
+/** Keep in sync with PANEL_ENTER_MOTION_MS in src/content/main.js */
+const PANEL_ENTER_MS = 292;
 const OPENS = 8;
 
 const FIXTURE_HTML = `<!DOCTYPE html>
@@ -126,7 +127,24 @@ for (let run = 0; run < OPENS; run += 1) {
     throw new Error(`open ${run + 1} final: panel not aligned over field (Δx=${Math.abs(panelMidX - fieldMidX)})`);
   }
 
+  const opacityBefore = await page.evaluate(() => {
+    const root = document.querySelector(".hiz-pwd-panel-host")?.shadowRoot?.querySelector(".hiz-pwd-panel");
+    return root ? Number.parseFloat(getComputedStyle(root).opacity) : 0;
+  });
   await page.keyboard.press("Escape");
+  await page.waitForTimeout(60);
+  const opacityMid = await page.evaluate(() => {
+    const root = document.querySelector(".hiz-pwd-panel-host")?.shadowRoot?.querySelector(".hiz-pwd-panel");
+    return root ? Number.parseFloat(getComputedStyle(root).opacity) : 0;
+  });
+  const exitAnimating = opacityBefore > 0.9 && opacityMid < 0.98;
+  const hasExitWaapi = await page.evaluate(() => {
+    const root = document.querySelector(".hiz-pwd-panel-host")?.shadowRoot?.querySelector(".hiz-pwd-panel");
+    return Boolean(root?.getAnimations?.().some((a) => a.playState === "running" || a.playState === "pending"));
+  });
+  if (!exitAnimating && !hasExitWaapi) {
+    throw new Error(`open ${run + 1}: exit did not fade (before=${opacityBefore} mid=${opacityMid})`);
+  }
   await page.waitForFunction(() => !document.querySelector(".hiz-pwd-panel-host"), { timeout: 5000 });
 }
 

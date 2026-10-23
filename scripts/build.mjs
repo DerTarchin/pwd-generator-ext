@@ -14,8 +14,6 @@ copyFileSync(
   join(dist, "fonts/kode-mono.woff2"),
 );
 
-const panelEnterMs = process.env.PANEL_ENTER_MS || "380";
-
 await esbuild.build({
   entryPoints: [join(root, "src/content/main.js")],
   bundle: true,
@@ -25,9 +23,6 @@ await esbuild.build({
   target: "chrome120",
   minify: false,
   sourcemap: true,
-  define: {
-    __PANEL_ENTER_MS__: panelEnterMs,
-  },
 });
 
 copyFileSync(join(root, "src/content/content.css"), join(dist, "content.css"));

@@ -1,5 +1,6 @@
 import { generatePassword } from "../lib/crypto.js";
 import { resolveSiteFromHostname } from "../lib/site-resolve.js";
+import { cleanHostInput, rowForInput } from "../lib/sites.js";
 
 const ICON_URL = chrome.runtime.getURL("icons/icon-48.png");
 const PANEL_CSS_URL = chrome.runtime.getURL("panel.css");
@@ -7,9 +8,14 @@ const PANEL_PAD = 16;
 const INPUT_MIN_W = 225;
 const INPUT_MAX_W = 500;
 const COPY_FEEDBACK_MS = 2000;
-const DEBOUNCE_MS = 350;
+const APPLY_IDLE_MS = 500;
 const POSITION_POLL_MS = 100;
-const PANEL_ENTER_MS = Number(__PANEL_ENTER_MS__);
+/** ~30% faster than the original 380ms enter. */
+const PANEL_ENTER_MOTION_MS = 292;
+const PANEL_ENTER_RADIUS_MS = Math.round(PANEL_ENTER_MOTION_MS * 0.75);
+const PANEL_RADIUS_PX = 18;
+const PANEL_EXPAND_MS = 280;
+const PANEL_EASE = "cubic-bezier(0.2, 0.85, 0.25, 1)";
 const PANEL_EXIT_MS = 200;
 const ICON_HOVER_SCALE = 1.5;
 
@@ -144,7 +150,7 @@ function ensureTopRemoteAnchor(fieldId, childWin, iframe) {
   const anchor = overlayDoc.createElement("button");
   anchor.type = "button";
   anchor.className = "hiz-pwd-anchor";
-  anchor.title = "hiz.al password";
+  anchor.title = "Password Generator";
   anchor.setAttribute("aria-label", "Generate site password");
   anchor.dataset.hizPwdFieldId = fieldId;
   const img = overlayDoc.createElement("img");
@@ -432,12 +438,19 @@ function panelViewportBox(el) {
   return { left: r.left, top: r.top, width: r.width, height: r.height };
 }
 
+function overlayViewportSize(overlayWin) {
+  const vw = overlayWin.innerWidth || overlayWin.document?.documentElement?.clientWidth || 0;
+  const vh = overlayWin.innerHeight || overlayWin.document?.documentElement?.clientHeight || 0;
+  return { vw: vw || 1280, vh: vh || 720 };
+}
+
 function isValidPanelBox(box, overlayWin) {
   if (!box) return false;
   const { left, top, width, height } = box;
   if (![left, top, width, height].every((v) => Number.isFinite(v))) return false;
   if (width < 8 || height < 8) return false;
-  const max = Math.max(overlayWin.innerWidth, overlayWin.innerHeight) * 2;
+  const { vw, vh } = overlayViewportSize(overlayWin);
+  const max = Math.max(vw, vh) * 2;
   if (left < -max || top < -max || left > max || top > max) return false;
   return true;
 }
@@ -516,6 +529,63 @@ function layoutPanel(host, root, phraseEl, getRect, overlayWin) {
   return panelViewportBox(root);
 }
 
+function finishPanelHeightLayout(panelState) {
+  const { host, root, phraseEl, getRect, overlayWin } = panelState;
+  window.clearTimeout(panelState.heightSyncTimer);
+  panelState.heightAnimating = false;
+  root.style.transition = "none";
+  layoutPanel(host, root, phraseEl, getRect, overlayWin);
+}
+
+function setResultExpanded(panelState, expanded, { animate = true } = {}) {
+  if (!panelState.resultEl || panelState.resultExpanded === expanded) return;
+  const { host, root, phraseEl, getRect, overlayWin } = panelState;
+  if (panelState.enterAnimating || panelState.closing) {
+    panelState.resultExpanded = expanded;
+    panelState.resultEl.classList.toggle("is-collapsed", !expanded);
+    root.style.transition = "none";
+    layoutPanel(host, root, phraseEl, getRect, overlayWin);
+    return;
+  }
+
+  const fromBox = panelViewportBox(root);
+  const fromH = fromBox.height;
+
+  panelState.resultExpanded = expanded;
+  panelState.resultEl.classList.toggle("is-collapsed", !expanded);
+
+  window.clearTimeout(panelState.heightSyncTimer);
+  panelState.heightAnimating = false;
+  root.style.transition = "none";
+  const box = layoutPanel(host, root, phraseEl, getRect, overlayWin);
+  const toH = box.height;
+
+  if (!animate || prefersReducedMotion(overlayWin) || Math.abs(fromH - toH) < 2) return;
+
+  applyPanelViewportBox(host, root, {
+    left: fromBox.left,
+    top: fromBox.top,
+    width: fromBox.width,
+    height: fromH,
+  });
+  void root.offsetHeight;
+
+  panelState.heightAnimating = true;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (panelState.closing || openPanel !== panelState) return;
+      root.style.transition = `height ${PANEL_EXPAND_MS}ms ${PANEL_EASE}`;
+      applyPanelViewportBox(host, root, box);
+      panelState.heightSyncTimer = window.setTimeout(() => {
+        panelState.heightAnimating = false;
+        if (panelState.closing || openPanel !== panelState) return;
+        root.style.transition = "none";
+        applyPanelViewportBox(host, root, box);
+      }, PANEL_EXPAND_MS + 40);
+    });
+  });
+}
+
 function waitForPanelReady(sheet, root) {
   return new Promise((resolve) => {
     const finish = () => {
@@ -543,7 +613,7 @@ function waitForPanelReady(sheet, root) {
 function hoveredIconRect(anchor) {
   const size = ICON_SIZE * ICON_HOVER_SCALE;
   const r = anchor?.getBoundingClientRect?.();
-  if (!r || r.width <= 0) return null;
+  if (!r || r.width <= 0 || r.height <= 0) return null;
   return {
     left: r.left + (r.width - size) / 2,
     top: r.top + (r.height - size) / 2,
@@ -552,11 +622,37 @@ function hoveredIconRect(anchor) {
   };
 }
 
-function prefersReducedMotion() {
+function iconStartRect(anchor, getRect, overlayWin) {
+  const fromAnchor = hoveredIconRect(anchor);
+  if (fromAnchor) return fromAnchor;
+  const rect = getRect?.();
+  if (!rect || rect.width <= 0) return null;
+  const { vw } = overlayViewportSize(overlayWin);
+  const size = ICON_SIZE * ICON_HOVER_SCALE;
+  const top = rect.top + Math.max(0, (rect.height - ICON_SIZE) / 2);
+  let left = rect.right + ICON_GAP;
+  if (left + ICON_SIZE > vw - 4) {
+    left = rect.left - ICON_GAP - ICON_SIZE;
+  }
+  return {
+    left: left + (ICON_SIZE - size) / 2,
+    top: top + (ICON_SIZE - size) / 2,
+    width: size,
+    height: size,
+  };
+}
+
+function prefersReducedMotion(overlayWin = window) {
   try {
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return overlayWin.matchMedia("(prefers-reduced-motion: reduce)").matches;
   } catch {
     return false;
+  }
+}
+
+function cancelPanelAnimations(root) {
+  for (const anim of root.getAnimations?.() ?? []) {
+    anim.cancel();
   }
 }
 
@@ -568,7 +664,7 @@ function runPanelEnterAnimation(host, root, anchor, finalLayout, panelState, ove
     final = layoutPanel(host, root, panelState.phraseEl, panelState.getRect, overlayWin);
   }
 
-  const start = hoveredIconRect(anchor);
+  const start = iconStartRect(anchor, panelState.getRect, overlayWin);
   root.style.transform = "none";
 
   const revealPanel = () => {
@@ -582,16 +678,17 @@ function runPanelEnterAnimation(host, root, anchor, finalLayout, panelState, ove
     root.style.transition = "none";
     root.style.transform = "none";
     applyPanelViewportBox(host, root, final);
-    root.style.borderRadius = "14px";
+    root.style.borderRadius = `${PANEL_RADIUS_PX}px`;
     revealPanel();
     panelState.enterAnimating = false;
   };
 
-  if (!start || !isValidPanelBox(final, overlayWin) || prefersReducedMotion()) {
+  if (!start || !isValidPanelBox(final, overlayWin)) {
     snapToFinal();
     return;
   }
 
+  window.clearTimeout(panelState.enterEndTimer);
   panelState.enterAnimating = true;
   root.style.transition = "none";
   root.style.transform = "none";
@@ -602,17 +699,19 @@ function runPanelEnterAnimation(host, root, anchor, finalLayout, panelState, ove
 
   void root.offsetHeight;
 
-  const ease = "cubic-bezier(0.2, 0.85, 0.25, 1)";
-  const props = `top ${PANEL_ENTER_MS}ms ${ease}, left ${PANEL_ENTER_MS}ms ${ease}, width ${PANEL_ENTER_MS}ms ${ease}, height ${PANEL_ENTER_MS}ms ${ease}, border-radius ${PANEL_ENTER_MS}ms ${ease}`;
+  const motionMs = PANEL_ENTER_MOTION_MS;
+  const radiusMs = PANEL_ENTER_RADIUS_MS;
+  const props = `top ${motionMs}ms ${PANEL_EASE}, left ${motionMs}ms ${PANEL_EASE}, width ${motionMs}ms ${PANEL_EASE}, height ${motionMs}ms ${PANEL_EASE}, border-radius ${radiusMs}ms ${PANEL_EASE}`;
   root.style.transition = props;
   applyPanelViewportBox(host, root, final);
-  root.style.borderRadius = "14px";
+  root.style.borderRadius = `${PANEL_RADIUS_PX}px`;
 
-  window.setTimeout(() => {
+  panelState.enterEndTimer = window.setTimeout(() => {
+    if (panelState.closing) return;
     panelState.enterAnimating = false;
     root.style.transition = "none";
     applyPanelViewportBox(host, root, final);
-  }, PANEL_ENTER_MS + 40);
+  }, motionMs + 40);
 }
 
 function finalizePanelLayout(host, root, phraseEl, getRect, overlayWin, anchor, panelState, sheet, onReady) {
@@ -639,7 +738,31 @@ function finalizePanelLayout(host, root, phraseEl, getRect, overlayWin, anchor, 
 
 let closePanelTimer = 0;
 
+function unbindPanelDismiss(panel) {
+  if (!panel.dismissDocs) return;
+  for (const doc of panel.dismissDocs) {
+    doc.removeEventListener("mousedown", onPanelDismiss, true);
+  }
+  panel.dismissDocs = null;
+}
+
+function bindPanelDismiss(panel) {
+  unbindPanelDismiss(panel);
+  const docs = new Set([panel.overlayDoc]);
+  if (panel.input?.ownerDocument) docs.add(panel.input.ownerDocument);
+  panel.dismissDocs = docs;
+  for (const doc of docs) {
+    doc.addEventListener("mousedown", onPanelDismiss, true);
+  }
+}
+
 function destroyPanel(panel) {
+  window.clearTimeout(panel.enterEndTimer);
+  window.clearTimeout(panel.heightSyncTimer);
+  window.clearTimeout(panel.applyDebounceTimer);
+  window.clearTimeout(closePanelTimer);
+  cancelPanelAnimations(panel.root);
+  unbindPanelDismiss(panel);
   panel.host.remove();
   setAnchorVisible(panel.anchor, true);
   if (openPanel === panel) openPanel = null;
@@ -647,28 +770,57 @@ function destroyPanel(panel) {
 
 function closePanel({ animated = true } = {}) {
   if (!openPanel) return;
-  window.clearTimeout(closePanelTimer);
   const panel = openPanel;
+  if (panel.closing) return;
+  window.clearTimeout(closePanelTimer);
+  window.clearTimeout(panel.enterEndTimer);
+  panel.enterAnimating = false;
+
+  const overlayWin = panel.overlayWin ?? window;
   if (!animated || !panel.root) {
     destroyPanel(panel);
     return;
   }
-  const root = panel.root;
-  panel.enterAnimating = false;
-  if (prefersReducedMotion()) {
+  if (prefersReducedMotion(overlayWin)) {
     destroyPanel(panel);
     return;
   }
+
+  const root = panel.root;
+  panel.closing = true;
+  root.style.pointerEvents = "none";
+  cancelPanelAnimations(root);
   root.style.transition = "none";
-  root.style.transform = "scale(1)";
-  void root.offsetHeight;
-  requestAnimationFrame(() => {
-    root.style.transition = `transform ${PANEL_EXIT_MS}ms ease-in, opacity ${PANEL_EXIT_MS}ms ease-in`;
-    root.style.transform = "scale(0.86)";
-    root.style.opacity = "0";
-    root.style.pointerEvents = "none";
-    closePanelTimer = window.setTimeout(() => destroyPanel(panel), PANEL_EXIT_MS + 30);
-  });
+
+  const opacity = Number.parseFloat(getComputedStyle(root).opacity);
+  const fromOpacity = Number.isFinite(opacity) ? opacity : 1;
+  const exitAnim = root.animate(
+    [
+      { transform: "scale(1)", opacity: fromOpacity },
+      { transform: "scale(0.86)", opacity: 0 },
+    ],
+    { duration: PANEL_EXIT_MS, easing: "ease-in", fill: "forwards" },
+  );
+  panel.exitAnim = exitAnim;
+  let exitDone = false;
+  const finishExit = () => {
+    if (exitDone) return;
+    exitDone = true;
+    window.clearTimeout(closePanelTimer);
+    exitAnim.onfinish = null;
+    exitAnim.oncancel = null;
+    if (openPanel === panel) destroyPanel(panel);
+  };
+  exitAnim.onfinish = finishExit;
+  exitAnim.oncancel = finishExit;
+  closePanelTimer = window.setTimeout(finishExit, PANEL_EXIT_MS + 60);
+}
+
+function clearCopyCheck(panel) {
+  if (!panel?.checkEl) return;
+  window.clearTimeout(panel.copyTimer);
+  panel.copyTimer = 0;
+  panel.checkEl.hidden = true;
 }
 
 function showCopyCheck(panel) {
@@ -754,9 +906,23 @@ function submitPasswordField(input) {
   requestAnimationFrame(() => requestAnimationFrame(fire));
 }
 
-function flashPasswordClick(outEl) {
-  outEl.classList.add("is-click-flash");
-  window.setTimeout(() => outEl.classList.remove("is-click-flash"), 450);
+function siteKeyFromSiteEl(siteEl) {
+  const text = (siteEl.textContent ?? "").trim();
+  if (!text) return "";
+  const row = rowForInput(text);
+  return row ? row.key : text.toLowerCase();
+}
+
+function normalizeSiteElLabel(siteEl) {
+  const text = (siteEl.textContent ?? "").trim();
+  if (!text) return;
+  const row = rowForInput(text);
+  if (row && siteEl.textContent !== row.name) {
+    siteEl.textContent = row.name;
+  }
+}
+
+function selectPasswordText(outEl) {
   const doc = outEl.ownerDocument;
   const range = doc.createRange();
   range.selectNodeContents(outEl);
@@ -818,9 +984,18 @@ function openForField(input, options = {}) {
         data-bwignore
         readonly
       />
-      <div class="hiz-pwd-site" id="hiz-pwd-site"></div>
-      <div class="hiz-pwd-result">
-        <p class="hiz-pwd-password is-pending" id="hiz-pwd-out">Enter passphrase</p>
+      <div
+        class="hiz-pwd-site"
+        id="hiz-pwd-site"
+        contenteditable="true"
+        spellcheck="false"
+        autocorrect="off"
+        autocapitalize="off"
+        role="textbox"
+        aria-label="Site"
+      ></div>
+      <div class="hiz-pwd-result is-collapsed" id="hiz-pwd-result">
+        <p class="hiz-pwd-password is-pending" id="hiz-pwd-out" aria-live="polite"></p>
         <span class="hiz-pwd-check" id="hiz-pwd-check" hidden>${CHECKMARK_SVG}</span>
       </div>
       <p class="hiz-pwd-error" id="hiz-pwd-err" hidden></p>
@@ -832,12 +1007,12 @@ function openForField(input, options = {}) {
   const labelEl = root.querySelector("label");
   const phraseEl = root.querySelector("#hiz-pwd-phrase");
   const siteEl = root.querySelector("#hiz-pwd-site");
+  const resultEl = root.querySelector("#hiz-pwd-result");
   const outEl = root.querySelector("#hiz-pwd-out");
   const checkEl = root.querySelector("#hiz-pwd-check");
   const errEl = root.querySelector("#hiz-pwd-err");
   siteEl.textContent = site.siteName;
 
-  let debounceTimer = 0;
   let lastApplied = "";
 
   const panelState = {
@@ -847,45 +1022,78 @@ function openForField(input, options = {}) {
     input,
     remote,
     anchor,
+    resultEl,
+    resultExpanded: false,
+    heightSyncTimer: 0,
+    heightAnimating: false,
+    applyDebounceTimer: 0,
+    pendingApplyPassword: "",
     checkEl,
     copyTimer: 0,
     overlayDoc,
     getRect,
     overlayWin,
     enterAnimating: false,
+    closing: false,
+    enterEndTimer: 0,
+    dismissDocs: null,
     reposition: null,
   };
 
-  async function runDerive({ refocusPhrase = true } = {}) {
+  function scheduleApplyPassword(panelState, password) {
+    panelState.pendingApplyPassword = password;
+    window.clearTimeout(panelState.applyDebounceTimer);
+    panelState.applyDebounceTimer = window.setTimeout(() => {
+      void flushApplyPassword(panelState);
+    }, APPLY_IDLE_MS);
+  }
+
+  async function flushApplyPassword(panelState, password = panelState.pendingApplyPassword) {
+    if (!password || password === lastApplied) return;
+    lastApplied = password;
+    const { input, remote } = panelState;
+    if (remote?.childWin) {
+      remote.childWin.postMessage({ source: MSG, type: "fill", fieldId: remote.fieldId, value: password }, "*");
+    } else if (input) {
+      fillInput(input, password);
+    }
+    await copyText(password);
+    showCopyCheck(panelState);
+  }
+
+  async function runDerive() {
     const phrase = phraseEl.value;
     if (!phrase.trim()) {
-      outEl.textContent = "Enter passphrase";
+      outEl.textContent = "";
       outEl.classList.add("is-pending");
       errEl.hidden = true;
+      panelState.pendingApplyPassword = "";
+      window.clearTimeout(panelState.applyDebounceTimer);
+      lastApplied = "";
+      setResultExpanded(panelState, false);
       return null;
     }
+    setResultExpanded(panelState, true);
     const serial = ++deriveSerial;
-    outEl.textContent = "Deriving…";
-    outEl.classList.add("is-pending");
+    if (!outEl.textContent || outEl.classList.contains("is-pending")) {
+      outEl.textContent = "Deriving…";
+      outEl.classList.add("is-pending");
+      finishPanelHeightLayout(panelState);
+    }
     errEl.hidden = true;
     try {
-      const password = await generatePassword(phrase, site.siteKey);
+      const siteKey = siteKeyFromSiteEl(siteEl);
+      if (!siteKey) {
+        errEl.hidden = false;
+        errEl.textContent = "Enter a site name.";
+        return null;
+      }
+      const password = await generatePassword(phrase, siteKey);
       if (serial !== deriveSerial) return null;
       outEl.textContent = password;
       outEl.classList.remove("is-pending");
-      if (password !== lastApplied) {
-        lastApplied = password;
-        if (remote?.childWin) {
-          remote.childWin.postMessage({ source: MSG, type: "fill", fieldId: remote.fieldId, value: password }, "*");
-        } else {
-          fillInput(input, password);
-        }
-        await copyText(password);
-        showCopyCheck(panelState);
-        if (refocusPhrase && openPanel?.phraseEl === phraseEl) {
-          phraseEl.focus({ preventScroll: true });
-        }
-      }
+      finishPanelHeightLayout(panelState);
+      scheduleApplyPassword(panelState, password);
       return password;
     } catch (error) {
       if (serial !== deriveSerial) return null;
@@ -893,14 +1101,17 @@ function openForField(input, options = {}) {
       outEl.classList.add("is-pending");
       errEl.hidden = false;
       errEl.textContent = error instanceof Error ? error.message : "Could not generate password.";
+      setResultExpanded(panelState, true);
+      finishPanelHeightLayout(panelState);
       return null;
     }
   }
 
   async function applyAndCloseFromEnter() {
-    window.clearTimeout(debounceTimer);
-    const password = await runDerive({ refocusPhrase: false });
+    window.clearTimeout(panelState.applyDebounceTimer);
+    const password = await runDerive();
     if (!password) return;
+    await flushApplyPassword(panelState, password);
     closePanel();
     if (remote?.childWin) {
       remote.childWin.postMessage({ source: MSG, type: "submit-enter", fieldId: remote.fieldId }, "*");
@@ -913,12 +1124,62 @@ function openForField(input, options = {}) {
     phraseEl.addEventListener(eventName, () => unlockPhraseInput(phraseEl), { passive: true });
   }
 
+  siteEl.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    event.stopPropagation();
+    normalizeSiteElLabel(siteEl);
+    window.clearTimeout(panelState.applyDebounceTimer);
+    if (!phraseEl.value.trim()) {
+      unlockPhraseInput(phraseEl);
+      phraseEl.focus({ preventScroll: true });
+      return;
+    }
+    void applyAndCloseFromEnter();
+  });
+
+  siteEl.addEventListener("paste", (event) => {
+    clearCopyCheck(panelState);
+    event.preventDefault();
+    const pasted = event.clipboardData?.getData("text/plain") ?? "";
+    const cleaned = cleanHostInput(pasted) || pasted.replace(/\s+/g, " ").trim();
+    siteEl.textContent = cleaned;
+    normalizeSiteElLabel(siteEl);
+    if (!panelState.enterAnimating && !panelState.heightAnimating) {
+      root.style.transition = "none";
+      layoutPanel(host, root, phraseEl, getRect, overlayWin);
+    }
+    void runDerive();
+  });
+
+  siteEl.addEventListener("input", () => {
+    clearCopyCheck(panelState);
+    if (!panelState.enterAnimating && !panelState.heightAnimating) {
+      root.style.transition = "none";
+      layoutPanel(host, root, phraseEl, getRect, overlayWin);
+    }
+    void runDerive();
+  });
+
+  siteEl.addEventListener("blur", () => {
+    normalizeSiteElLabel(siteEl);
+  });
+
   phraseEl.addEventListener("input", () => {
+    clearCopyCheck(panelState);
     unlockPhraseInput(phraseEl);
-    window.clearTimeout(debounceTimer);
-    debounceTimer = window.setTimeout(() => {
-      void runDerive();
-    }, DEBOUNCE_MS);
+    if (phraseEl.value.trim()) {
+      setResultExpanded(panelState, true);
+    } else {
+      outEl.textContent = "";
+      outEl.classList.add("is-pending");
+      errEl.hidden = true;
+      lastApplied = "";
+      panelState.pendingApplyPassword = "";
+      window.clearTimeout(panelState.applyDebounceTimer);
+      setResultExpanded(panelState, false);
+    }
+    void runDerive();
   });
 
   phraseEl.addEventListener("keydown", (event) => {
@@ -944,19 +1205,21 @@ function openForField(input, options = {}) {
   outEl.addEventListener("click", async () => {
     if (outEl.classList.contains("is-pending")) return;
     const text = outEl.textContent?.trim();
-    if (!text || text === "Deriving…" || text === "Enter passphrase") return;
-    flashPasswordClick(outEl);
+    if (!text || text === "Deriving…") return;
+    selectPasswordText(outEl);
     await copyText(text);
     showCopyCheck(panelState);
   });
 
   panelState.reposition = () => {
-    if (panelState.enterAnimating) return;
+    if (panelState.enterAnimating || panelState.heightAnimating) return;
     root.style.transition = "none";
     layoutPanel(host, root, phraseEl, getRect, overlayWin);
   };
   openPanel = panelState;
   panelState.enterAnimating = true;
+  panelState.closing = false;
+  bindPanelDismiss(panelState);
   finalizePanelLayout(host, root, phraseEl, getRect, overlayWin, anchor, panelState, sheet, () => {
     unlockPhraseInput(phraseEl);
     phraseEl.focus({ preventScroll: true });
@@ -976,7 +1239,7 @@ function attachToField(input) {
   const anchor = overlayDoc.createElement("button");
   anchor.type = "button";
   anchor.className = "hiz-pwd-anchor";
-  anchor.title = "hiz.al password";
+  anchor.title = "Password Generator";
   anchor.setAttribute("aria-label", "Generate site password");
   const img = overlayDoc.createElement("img");
   img.src = ICON_URL;
@@ -999,8 +1262,8 @@ function scan() {
   for (const input of findPasswordFields()) attachToField(input);
 }
 
-function onDocPointer(event) {
-  if (!openPanel) return;
+function onPanelDismiss(event) {
+  if (!openPanel || openPanel.closing) return;
   const path = event.composedPath();
   if (path.includes(openPanel.host)) return;
   const anchor = openPanel.anchor ?? anchors.get(openPanel.input);
@@ -1009,9 +1272,6 @@ function onDocPointer(event) {
   event.stopPropagation();
   closePanel();
 }
-
-document.addEventListener("mousedown", onDocPointer, true);
-document.addEventListener("click", onDocPointer, true);
 if (isTopWindow()) installTopBridge();
 scan();
 

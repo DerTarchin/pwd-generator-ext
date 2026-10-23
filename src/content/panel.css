@@ -23,7 +23,7 @@
   width: calc(var(--input-w) + 2 * var(--content-pad));
   max-width: calc(100vw - 8px);
   padding: var(--content-pad);
-  border-radius: 14px;
+  border-radius: 18px;
   border: 1px solid rgba(142, 176, 255, 0.2);
   background: #121018;
   color: #f3f1eb;
@@ -41,6 +41,8 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #a8b6de;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .hiz-pwd-panel input[type="text"] {
@@ -74,7 +76,20 @@
   padding: 0 0 0 var(--content-pad);
   color: rgba(142, 176, 255, 0.55);
   font-size: 0.9rem;
+  line-height: 1.4;
   word-break: break-word;
+  outline: none;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.hiz-pwd-site:focus {
+  outline: none;
+  color: #f3f1eb;
 }
 
 .hiz-pwd-result {
@@ -83,6 +98,10 @@
   align-items: center;
   margin: 0.65rem 0 0;
   min-height: 1.5rem;
+}
+
+.hiz-pwd-result.is-collapsed {
+  display: none;
 }
 
 .hiz-pwd-password {
@@ -99,16 +118,11 @@
   cursor: pointer;
   user-select: all;
   border-radius: 8px;
-  transition: background 0.15s ease;
 }
 
 .hiz-pwd-password::selection {
   background: rgba(90, 111, 184, 0.45);
   color: #f3f1eb;
-}
-
-.hiz-pwd-password.is-click-flash {
-  background: rgba(90, 111, 184, 0.35);
 }
 
 .hiz-pwd-password.is-pending {
@@ -151,7 +165,5 @@
 @media (prefers-reduced-motion: reduce) {
   .hiz-pwd-panel {
     transition: none !important;
-    visibility: visible !important;
-    opacity: 1 !important;
   }
 }
