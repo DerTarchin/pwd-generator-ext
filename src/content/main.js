@@ -418,6 +418,8 @@ async function autofillUsernameOnce(passwordInput, siteKey) {
   if (!stored?.value) return;
   if (usernameEl.value.trim()) return;
   fillInput(usernameEl, stored.value);
+  if (!passwordInput.isConnected || openPanel?.input === passwordInput) return;
+  openForField(passwordInput);
 }
 
 async function rememberUsernameForSite(passwordInput, siteKey) {
