@@ -10,9 +10,16 @@
   --content-pad: 16px;
   --input-w: 280px;
   --mono: "Kode Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  position: relative;
+  position: absolute;
+  top: 0;
+  left: 0;
   visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
   box-sizing: border-box;
+  will-change: top, left, width, height, border-radius, transform, opacity;
+  transform-origin: center center;
   width: calc(var(--input-w) + 2 * var(--content-pad));
   max-width: calc(100vw - 8px);
   padding: var(--content-pad);
@@ -139,4 +146,12 @@
   padding-left: var(--content-pad);
   font-size: 0.8rem;
   color: #e7b2a2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hiz-pwd-panel {
+    transition: none !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
 }

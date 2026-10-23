@@ -7,6 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node scripts/build.mjs && node scripts/test-crypto.mjs && node scripts/test-extension.mjs",
+    "test:animation": "PANEL_ENTER_MS=4000 node scripts/build.mjs && PANEL_ENTER_MS=4000 node scripts/test-panel-animation.mjs",
     "test:schwab": "node scripts/build.mjs && node scripts/test-schwab.mjs",
     "test:chase": "node scripts/build.mjs && node scripts/test-chase.mjs"
   },

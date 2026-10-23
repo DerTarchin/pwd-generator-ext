@@ -9,6 +9,9 @@ const INPUT_MAX_W = 500;
 const COPY_FEEDBACK_MS = 2000;
 const DEBOUNCE_MS = 350;
 const POSITION_POLL_MS = 100;
+const PANEL_ENTER_MS = Number(__PANEL_ENTER_MS__);
+const PANEL_EXIT_MS = 200;
+const ICON_HOVER_SCALE = 1.5;
 
 const CHECKMARK_SVG = `
 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -424,54 +427,248 @@ function placeNearField(anchor, getRect, overlayWin = window) {
   anchor.style.left = `${left}px`;
 }
 
-function alignPanelOverInput(host, phraseEl, getRect) {
+function panelViewportBox(el) {
+  const r = el.getBoundingClientRect();
+  return { left: r.left, top: r.top, width: r.width, height: r.height };
+}
+
+function isValidPanelBox(box, overlayWin) {
+  if (!box) return false;
+  const { left, top, width, height } = box;
+  if (![left, top, width, height].every((v) => Number.isFinite(v))) return false;
+  if (width < 8 || height < 8) return false;
+  const max = Math.max(overlayWin.innerWidth, overlayWin.innerHeight) * 2;
+  if (left < -max || top < -max || left > max || top > max) return false;
+  return true;
+}
+
+function applyPanelViewportBox(host, root, box, { lockHeight = true } = {}) {
+  const hostRect = host.getBoundingClientRect();
+  root.style.left = `${box.left - hostRect.left}px`;
+  root.style.top = `${box.top - hostRect.top}px`;
+  root.style.width = `${box.width}px`;
+  if (lockHeight) {
+    root.style.height = `${box.height}px`;
+  } else {
+    root.style.height = "auto";
+  }
+}
+
+function alignPanelOverInput(host, root, phraseEl, getRect) {
   const rect = getRect();
   const phraseRect = phraseEl.getBoundingClientRect();
-  const hostRect = host.getBoundingClientRect();
+  const rootBox = panelViewportBox(root);
   const targetCenterY = rect.top + rect.height / 2;
   const phraseCenterY = phraseRect.top + phraseRect.height / 2;
-  host.style.left = `${hostRect.left + (rect.left - phraseRect.left)}px`;
-  host.style.top = `${hostRect.top + (targetCenterY - phraseCenterY)}px`;
+  applyPanelViewportBox(host, root, {
+    left: rootBox.left + (rect.left - phraseRect.left),
+    top: rootBox.top + (targetCenterY - phraseCenterY),
+    width: rootBox.width,
+    height: rootBox.height,
+  });
 }
 
 function clampPanelInViewport(host, root, phraseEl, getRect, overlayWin) {
   const margin = 8;
-  const panelRect = root.getBoundingClientRect();
+  const box = panelViewportBox(root);
   const viewW = overlayWin.innerWidth;
-  if (panelRect.right > viewW - margin) {
-    const dx = viewW - margin - panelRect.right;
-    const left = parseFloat(host.style.left) || 0;
-    host.style.left = `${left + dx}px`;
+  if (box.left + box.width > viewW - margin) {
+    applyPanelViewportBox(host, root, {
+      left: box.left + (viewW - margin - (box.left + box.width)),
+      top: box.top,
+      width: box.width,
+      height: box.height,
+    });
   }
-  alignPanelOverInput(host, phraseEl, getRect);
+  alignPanelOverInput(host, root, phraseEl, getRect);
 }
 
-function layoutPanel(host, root, phraseEl, getRect, overlayWin, { reveal = false } = {}) {
+function layoutPanel(host, root, phraseEl, getRect, overlayWin) {
+  host.style.left = "0";
+  host.style.top = "0";
+
   const rect = getRect();
   const inputW = clampInputWidth(rect.width);
   root.style.setProperty("--input-w", `${inputW}px`);
-  host.style.left = `${rect.left - PANEL_PAD}px`;
-  host.style.top = `${rect.top - PANEL_PAD}px`;
-  alignPanelOverInput(host, phraseEl, getRect);
-  clampPanelInViewport(host, root, phraseEl, getRect, overlayWin);
-  if (reveal) root.style.visibility = "visible";
+  const panelW = inputW + 2 * PANEL_PAD;
+
+  applyPanelViewportBox(
+    host,
+    root,
+    { left: rect.left - PANEL_PAD, top: rect.top - PANEL_PAD, width: panelW, height: 0 },
+    { lockHeight: false },
+  );
+
+  for (let i = 0; i < 2; i += 1) {
+    alignPanelOverInput(host, root, phraseEl, getRect);
+    clampPanelInViewport(host, root, phraseEl, getRect, overlayWin);
+  }
+
+  const measured = panelViewportBox(root);
+  const panelH = Math.max(1, Math.round(measured.height));
+  const finalBox = {
+    left: measured.left,
+    top: measured.top,
+    width: panelW,
+    height: panelH,
+  };
+  applyPanelViewportBox(host, root, finalBox);
+  return panelViewportBox(root);
 }
 
-function finalizePanelLayout(host, root, phraseEl, getRect, overlayWin) {
-  layoutPanel(host, root, phraseEl, getRect, overlayWin);
-  requestAnimationFrame(() => {
-    layoutPanel(host, root, phraseEl, getRect, overlayWin, { reveal: true });
+function waitForPanelReady(sheet, root) {
+  return new Promise((resolve) => {
+    const finish = () => {
+      let attempts = 0;
+      const tick = () => {
+        attempts += 1;
+        const w = root.getBoundingClientRect().width;
+        if (w > 80 || attempts >= 12) {
+          resolve();
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+    if (sheet.sheet) {
+      finish();
+      return;
+    }
+    sheet.addEventListener("load", finish, { once: true });
+    sheet.addEventListener("error", finish, { once: true });
+  });
+}
+
+function hoveredIconRect(anchor) {
+  const size = ICON_SIZE * ICON_HOVER_SCALE;
+  const r = anchor?.getBoundingClientRect?.();
+  if (!r || r.width <= 0) return null;
+  return {
+    left: r.left + (r.width - size) / 2,
+    top: r.top + (r.height - size) / 2,
+    width: size,
+    height: size,
+  };
+}
+
+function prefersReducedMotion() {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
+function runPanelEnterAnimation(host, root, anchor, finalLayout, panelState, overlayWin) {
+  let final = finalLayout;
+  if (!isValidPanelBox(final, overlayWin)) {
+    root.style.transition = "none";
+    root.style.transform = "none";
+    final = layoutPanel(host, root, panelState.phraseEl, panelState.getRect, overlayWin);
+  }
+
+  const start = hoveredIconRect(anchor);
+  root.style.transform = "none";
+
+  const revealPanel = () => {
+    host.style.visibility = "visible";
+    root.style.visibility = "visible";
+    root.style.pointerEvents = "auto";
+    root.style.opacity = "1";
+  };
+
+  const snapToFinal = () => {
+    root.style.transition = "none";
+    root.style.transform = "none";
+    applyPanelViewportBox(host, root, final);
+    root.style.borderRadius = "14px";
+    revealPanel();
+    panelState.enterAnimating = false;
+  };
+
+  if (!start || !isValidPanelBox(final, overlayWin) || prefersReducedMotion()) {
+    snapToFinal();
+    return;
+  }
+
+  panelState.enterAnimating = true;
+  root.style.transition = "none";
+  root.style.transform = "none";
+  applyPanelViewportBox(host, root, start);
+  root.style.borderRadius = "50%";
+  void root.offsetHeight;
+  revealPanel();
+
+  void root.offsetHeight;
+
+  const ease = "cubic-bezier(0.2, 0.85, 0.25, 1)";
+  const props = `top ${PANEL_ENTER_MS}ms ${ease}, left ${PANEL_ENTER_MS}ms ${ease}, width ${PANEL_ENTER_MS}ms ${ease}, height ${PANEL_ENTER_MS}ms ${ease}, border-radius ${PANEL_ENTER_MS}ms ${ease}`;
+  root.style.transition = props;
+  applyPanelViewportBox(host, root, final);
+  root.style.borderRadius = "14px";
+
+  window.setTimeout(() => {
+    panelState.enterAnimating = false;
+    root.style.transition = "none";
+    applyPanelViewportBox(host, root, final);
+  }, PANEL_ENTER_MS + 40);
+}
+
+function finalizePanelLayout(host, root, phraseEl, getRect, overlayWin, anchor, panelState, sheet, onReady) {
+  panelState.enterAnimating = true;
+  void waitForPanelReady(sheet, root).then(() => {
+    root.style.visibility = "hidden";
+    root.style.opacity = "0";
+    root.style.pointerEvents = "none";
+    const settle = () => {
+      root.style.transition = "none";
+      root.style.transform = "none";
+      return layoutPanel(host, root, phraseEl, getRect, overlayWin);
+    };
     requestAnimationFrame(() => {
-      layoutPanel(host, root, phraseEl, getRect, overlayWin, { reveal: true });
+      settle();
+      requestAnimationFrame(() => {
+        const finalBox = settle();
+        runPanelEnterAnimation(host, root, anchor, finalBox, panelState, overlayWin);
+        onReady?.();
+      });
     });
   });
 }
 
-function closePanel() {
+let closePanelTimer = 0;
+
+function destroyPanel(panel) {
+  panel.host.remove();
+  setAnchorVisible(panel.anchor, true);
+  if (openPanel === panel) openPanel = null;
+}
+
+function closePanel({ animated = true } = {}) {
   if (!openPanel) return;
-  openPanel.host.remove();
-  setAnchorVisible(openPanel.anchor, true);
-  openPanel = null;
+  window.clearTimeout(closePanelTimer);
+  const panel = openPanel;
+  if (!animated || !panel.root) {
+    destroyPanel(panel);
+    return;
+  }
+  const root = panel.root;
+  panel.enterAnimating = false;
+  if (prefersReducedMotion()) {
+    destroyPanel(panel);
+    return;
+  }
+  root.style.transition = "none";
+  root.style.transform = "scale(1)";
+  void root.offsetHeight;
+  requestAnimationFrame(() => {
+    root.style.transition = `transform ${PANEL_EXIT_MS}ms ease-in, opacity ${PANEL_EXIT_MS}ms ease-in`;
+    root.style.transform = "scale(0.86)";
+    root.style.opacity = "0";
+    root.style.pointerEvents = "none";
+    closePanelTimer = window.setTimeout(() => destroyPanel(panel), PANEL_EXIT_MS + 30);
+  });
 }
 
 function showCopyCheck(panel) {
@@ -569,7 +766,7 @@ function flashPasswordClick(outEl) {
 }
 
 function openForField(input, options = {}) {
-  closePanel();
+  closePanel({ animated: false });
   const remote = options.remote ?? null;
   const overlayDoc = options.overlayDoc ?? resolveOverlayTarget(input).overlayDoc;
   const getRect = options.getRect ?? resolveOverlayTarget(input).getRect;
@@ -589,6 +786,7 @@ function openForField(input, options = {}) {
 
   const host = overlayDoc.createElement("div");
   host.className = "hiz-pwd-panel-host";
+  host.style.visibility = "hidden";
   const shadow = host.attachShadow({ mode: "open" });
   const sheet = overlayDoc.createElement("link");
   sheet.rel = "stylesheet";
@@ -597,6 +795,9 @@ function openForField(input, options = {}) {
 
   const root = overlayDoc.createElement("div");
   root.className = "hiz-pwd-panel";
+  root.style.opacity = "0";
+  root.style.visibility = "hidden";
+  root.style.pointerEvents = "none";
   root.innerHTML = `
     <form class="hiz-pwd-form" autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore>
       <label for="hiz-pwd-phrase">Passphrase</label>
@@ -641,6 +842,7 @@ function openForField(input, options = {}) {
 
   const panelState = {
     host,
+    root,
     phraseEl,
     input,
     remote,
@@ -650,6 +852,7 @@ function openForField(input, options = {}) {
     overlayDoc,
     getRect,
     overlayWin,
+    enterAnimating: false,
     reposition: null,
   };
 
@@ -747,11 +950,17 @@ function openForField(input, options = {}) {
     showCopyCheck(panelState);
   });
 
-  panelState.reposition = () => layoutPanel(host, root, phraseEl, getRect, overlayWin, { reveal: true });
+  panelState.reposition = () => {
+    if (panelState.enterAnimating) return;
+    root.style.transition = "none";
+    layoutPanel(host, root, phraseEl, getRect, overlayWin);
+  };
   openPanel = panelState;
-  finalizePanelLayout(host, root, phraseEl, getRect, overlayWin);
-  unlockPhraseInput(phraseEl);
-  phraseEl.focus({ preventScroll: true });
+  panelState.enterAnimating = true;
+  finalizePanelLayout(host, root, phraseEl, getRect, overlayWin, anchor, panelState, sheet, () => {
+    unlockPhraseInput(phraseEl);
+    phraseEl.focus({ preventScroll: true });
+  });
 }
 
 function attachToField(input) {
