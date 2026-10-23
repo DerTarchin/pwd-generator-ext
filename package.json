@@ -1,5 +1,5 @@
 {
-  "name": "hiz-pwd-ce",
+  "name": "pwd-generator-ext",
   "private": true,
   "type": "module",
   "version": "1.0.0",

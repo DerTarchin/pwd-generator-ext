@@ -16,7 +16,7 @@ function isExtensionContext() {
 }
 
 if (!isExtensionContext()) {
-  throw new Error("hiz-pwd-ce: extension context invalid");
+  throw new Error("pwd-generator-ext: extension context invalid");
 }
 
 function isPasswordField(el) {

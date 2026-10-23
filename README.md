@@ -1,4 +1,4 @@
-# hiz-pwd-ce
+# pwd-generator-ext
 
 Chrome extension for the same deterministic passwords as [hiz.al/pwd](https://hiz.al/pwd/). No extension popup UI — a floating icon appears beside password fields.
 

@@ -27,7 +27,7 @@ const server = createServer((req, res) => {
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const { port } = server.address();
 
-const userDataDir = mkdtempSync(join(tmpdir(), "hiz-pwd-ce-"));
+const userDataDir = mkdtempSync(join(tmpdir(), "pwd-generator-ext-"));
 
 const contextWithExt = await chromium.launchPersistentContext(userDataDir, {
   executablePath: chromeExecutable,

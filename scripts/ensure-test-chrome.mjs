@@ -25,7 +25,7 @@ export function ensureChrome133() {
   const existing = findChrome133Executable();
   if (existing) return existing;
 
-  console.log("[hiz-pwd-ce] Installing Chrome 133 for extension e2e tests…");
+  console.log("[pwd-generator-ext] Installing Chrome 133 for extension e2e tests…");
   const result = spawnSync(
     "npx",
     [
