@@ -50,6 +50,18 @@ await esbuild.build({
 copyFileSync(join(root, "src/popup/popup.html"), join(dist, "popup.html"));
 copyFileSync(join(root, "src/popup/popup.css"), join(dist, "popup.css"));
 
+await esbuild.build({
+  entryPoints: [join(root, "src/offscreen/offscreen.js")],
+  bundle: true,
+  outfile: join(dist, "offscreen.js"),
+  format: "esm",
+  platform: "browser",
+  target: "chrome120",
+  minify: false,
+  sourcemap: true,
+});
+copyFileSync(join(root, "src/offscreen/offscreen.html"), join(dist, "offscreen.html"));
+
 copyFileSync(join(root, "src/content/content.css"), join(dist, "content.css"));
 copyFileSync(join(root, "src/content/panel.css"), join(dist, "panel.css"));
 copyFileSync(join(root, "manifest.json"), join(dist, "manifest.json"));

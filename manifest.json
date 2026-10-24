@@ -3,7 +3,7 @@
   "name": "Password Generator",
   "version": "1.0.0",
   "description": "Deterministic site passwords from your master passphrase (same as hiz.al/pwd).",
-  "permissions": ["clipboardWrite", "storage", "activeTab"],
+  "permissions": ["clipboardWrite", "storage", "activeTab", "offscreen"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

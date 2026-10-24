@@ -253,7 +253,16 @@ function installChildBridge() {
 }
 
 function attachRemoteToTop(input) {
-  if (tracked.has(input)) return;
+  if (tracked.has(input)) {
+    if (input.isConnected) return;
+    tracked.delete(input);
+    const fieldId = input.dataset?.hizPwdFieldId;
+    if (fieldId) {
+      remoteInputs.delete(fieldId);
+      topRemoteFields.delete(fieldId);
+      anchorBindings.delete(`remote:${fieldId}`);
+    }
+  }
   tracked.add(input);
   const fieldId = assignFieldId(input);
   remoteInputs.set(fieldId, input);
@@ -1179,8 +1188,9 @@ function openForField(input, options = {}) {
       fillInput(input, password);
       await rememberUsernameForSite(input, siteKey);
     }
-    await copyText(password);
-    showCopyCheck(panelState);
+    if (await copyText(password, { doc: panelState.overlayDoc })) {
+      showCopyCheck(panelState);
+    }
   }
 
   async function runDerive() {
@@ -1326,8 +1336,9 @@ function openForField(input, options = {}) {
     const text = displayedPasswordValue(outEl);
     if (!text) return;
     selectPasswordText(outEl);
-    await copyText(text);
-    showCopyCheck(panelState);
+    if (await copyText(text, { doc: outEl.ownerDocument })) {
+      showCopyCheck(panelState);
+    }
   });
 
   panelState.reposition = () => {
@@ -1348,8 +1359,42 @@ function openForField(input, options = {}) {
   });
 }
 
+function detachFromField(input) {
+  if (!input) return;
+  tracked.delete(input);
+  usernameAutofillDone.delete(input);
+  const anchor = anchors.get(input);
+  if (anchor) {
+    anchor.remove();
+    anchors.delete(input);
+  }
+  anchorBindings.delete(input);
+}
+
+function purgeStaleFieldAttachments() {
+  for (const input of [...anchors.keys()]) {
+    const anchor = anchors.get(input);
+    if (!input.isConnected || !anchor?.isConnected) detachFromField(input);
+  }
+  for (const [fieldId, input] of [...remoteInputs.entries()]) {
+    if (!input.isConnected) {
+      tracked.delete(input);
+      remoteInputs.delete(fieldId);
+      const remoteKey = `remote:${fieldId}`;
+      const binding = anchorBindings.get(remoteKey);
+      binding?.anchor?.remove();
+      anchorBindings.delete(remoteKey);
+      topRemoteFields.delete(fieldId);
+    }
+  }
+}
+
 function attachToField(input) {
-  if (tracked.has(input)) return;
+  if (tracked.has(input)) {
+    const anchor = anchors.get(input);
+    if (input.isConnected && anchor?.isConnected) return;
+    detachFromField(input);
+  }
   if (isCrossOriginToTop()) {
     attachRemoteToTop(input);
     return;
@@ -1384,6 +1429,7 @@ function attachToField(input) {
 }
 
 function scan() {
+  purgeStaleFieldAttachments();
   for (const input of findPasswordFields()) attachToField(input);
 }
 
