@@ -390,7 +390,13 @@ function rectKey(rect) {
   return `${rect.top.toFixed(1)}|${rect.left.toFixed(1)}|${rect.width.toFixed(1)}|${rect.height.toFixed(1)}`;
 }
 
+function refreshFieldAttachments() {
+  purgeStaleFieldAttachments();
+  for (const input of findPasswordFields()) attachToField(input);
+}
+
 function repositionAll({ force = false } = {}) {
+  refreshFieldAttachments();
   for (const binding of anchorBindings.values()) {
     const { anchor, input, mountRoot, getRect } = binding;
     if (input && !input.isConnected) continue;
@@ -1371,10 +1377,19 @@ function detachFromField(input) {
   anchorBindings.delete(input);
 }
 
+function isAnchorVisible(anchor) {
+  if (!(anchor instanceof HTMLElement)) return false;
+  return isFieldVisible(anchor);
+}
+
 function purgeStaleFieldAttachments() {
   for (const input of [...anchors.keys()]) {
     const anchor = anchors.get(input);
-    if (!input.isConnected || !anchor?.isConnected) detachFromField(input);
+    if (!input?.isConnected || !anchor?.isConnected) {
+      detachFromField(input);
+      continue;
+    }
+    if (!isFieldVisible(input) || !isAnchorVisible(anchor)) detachFromField(input);
   }
   for (const [fieldId, input] of [...remoteInputs.entries()]) {
     if (!input.isConnected) {
@@ -1392,7 +1407,14 @@ function purgeStaleFieldAttachments() {
 function attachToField(input) {
   if (tracked.has(input)) {
     const anchor = anchors.get(input);
-    if (input.isConnected && anchor?.isConnected) return;
+    if (
+      input.isConnected &&
+      anchor?.isConnected &&
+      isFieldVisible(input) &&
+      isAnchorVisible(anchor)
+    ) {
+      return;
+    }
     detachFromField(input);
   }
   if (isCrossOriginToTop()) {
@@ -1429,8 +1451,7 @@ function attachToField(input) {
 }
 
 function scan() {
-  purgeStaleFieldAttachments();
-  for (const input of findPasswordFields()) attachToField(input);
+  refreshFieldAttachments();
 }
 
 function onPanelDismiss(event) {
