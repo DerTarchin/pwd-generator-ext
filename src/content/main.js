@@ -1,4 +1,6 @@
-import { generatePassword } from "../lib/crypto.js";
+import { copyText } from "../lib/copy.js";
+import { generatePassword } from "../lib/crypto-client.js";
+import { PASSWORD_LENGTH } from "../lib/derive.js";
 import { resolveSiteFromHostname } from "../lib/site-resolve.js";
 import { cleanHostInput, rowForInput } from "../lib/sites.js";
 import {
@@ -53,7 +55,7 @@ const tracked = new WeakSet();
 const usernameAutofillDone = new WeakSet();
 const anchors = new Map();
 const anchorBindings = new Map();
-const overlayByDoc = new WeakMap();
+const overlayByParent = new WeakMap();
 const overlayWatchers = new WeakSet();
 const remoteInputs = new Map();
 const remoteIntervals = new Map();
@@ -288,30 +290,45 @@ function attachRemoteToTop(input) {
   void autofillUsernameOnce(input, site.siteKey);
 }
 
-function keepOverlayOnTop(overlayDoc) {
-  const overlay = overlayByDoc.get(overlayDoc);
+function findFlyoutMountRoot(input) {
+  if (!(input instanceof Element)) return null;
+  let node = input.parentElement;
+  for (let depth = 0; depth < 30 && node; depth += 1) {
+    if (!(node instanceof HTMLElement)) break;
+    const id = node.id?.toLowerCase() ?? "";
+    if (id.includes("flyout")) return node;
+    const role = node.getAttribute("role");
+    if (role === "dialog" || node.getAttribute("aria-modal") === "true") return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function keepOverlayOnTop(parent) {
+  const overlay = overlayByParent.get(parent);
   if (!overlay?.isConnected) return;
-  const parent = overlay.parentNode;
-  if (parent && parent.lastElementChild !== overlay) {
+  if (parent.lastElementChild !== overlay) {
     parent.appendChild(overlay);
   }
 }
 
-function getOverlayForDoc(overlayDoc) {
-  let overlay = overlayByDoc.get(overlayDoc);
-  if (!overlay?.isConnected) {
+function getOverlayForDoc(overlayDoc, mountRoot = null) {
+  const parent = mountRoot ?? overlayDoc.documentElement;
+  let overlay = overlayByParent.get(parent);
+  if (!overlay?.isConnected || overlay.parentNode !== parent) {
     overlay = overlayDoc.createElement("div");
     overlay.className = "hiz-pwd-overlay";
+    if (mountRoot) overlay.classList.add("is-contained");
     overlay.setAttribute("data-hiz-pwd-overlay", "");
-    overlayDoc.documentElement.appendChild(overlay);
-    overlayByDoc.set(overlayDoc, overlay);
-    if (!overlayWatchers.has(overlayDoc)) {
-      overlayWatchers.add(overlayDoc);
-      const topObserver = new MutationObserver(() => keepOverlayOnTop(overlayDoc));
-      topObserver.observe(overlayDoc.documentElement, { childList: true });
+    parent.appendChild(overlay);
+    overlayByParent.set(parent, overlay);
+    if (!overlayWatchers.has(parent)) {
+      overlayWatchers.add(parent);
+      const topObserver = new MutationObserver(() => keepOverlayOnTop(parent));
+      topObserver.observe(parent, { childList: true });
     }
   } else {
-    keepOverlayOnTop(overlayDoc);
+    keepOverlayOnTop(parent);
   }
   return overlay;
 }
@@ -356,7 +373,8 @@ function resolveOverlayTarget(input) {
     return new DOMRect(left, top, rect.width, rect.height);
   }
 
-  return { overlayDoc, getRect };
+  const mountRoot = findFlyoutMountRoot(input);
+  return { overlayDoc, getRect, mountRoot };
 }
 
 function rectKey(rect) {
@@ -365,18 +383,20 @@ function rectKey(rect) {
 
 function repositionAll({ force = false } = {}) {
   for (const binding of anchorBindings.values()) {
-    const { anchor, input, overlayDoc, getRect } = binding;
+    const { anchor, input, mountRoot, getRect } = binding;
     if (input && !input.isConnected) continue;
-    keepOverlayOnTop(overlayDoc);
+    const parent = mountRoot ?? binding.overlayDoc?.documentElement;
+    if (parent) keepOverlayOnTop(parent);
     const rect = getRect();
     const key = rectKey(rect);
     if (!force && !openPanel && binding.lastRectKey === key) continue;
     binding.lastRectKey = key;
-    const overlayWin = overlayDoc.defaultView ?? window;
+    const overlayWin = binding.overlayDoc?.defaultView ?? window;
     placeNearField(anchor, getRect, overlayWin);
   }
   if (openPanel) {
-    keepOverlayOnTop(openPanel.overlayDoc);
+    const parent = openPanel.mountRoot ?? openPanel.overlayDoc?.documentElement;
+    if (parent) keepOverlayOnTop(parent);
     openPanel.reposition?.();
   }
 }
@@ -486,21 +506,19 @@ function unlockPhraseInput(phraseEl) {
   phraseEl.removeAttribute("readonly");
 }
 
-async function copyText(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function clampInputWidth(width) {
   return Math.min(INPUT_MAX_W, Math.max(INPUT_MIN_W, width));
 }
 
 const ICON_SIZE = 22;
 const ICON_GAP = 10;
+
+function overlayViewportOffset(anchor) {
+  const overlay = anchor?.parentElement;
+  if (!overlay?.classList?.contains("is-contained")) return { left: 0, top: 0 };
+  const box = overlay.getBoundingClientRect();
+  return { left: box.left, top: box.top };
+}
 
 function placeNearField(anchor, getRect, overlayWin = window) {
   const rect = getRect();
@@ -511,11 +529,13 @@ function placeNearField(anchor, getRect, overlayWin = window) {
   if (!anchor.classList.contains("is-hidden")) {
     anchor.hidden = false;
   }
-  const top = rect.top + Math.max(0, (rect.height - ICON_SIZE) / 2);
-  let left = rect.right + ICON_GAP;
+  const offset = overlayViewportOffset(anchor);
+  const top = rect.top + Math.max(0, (rect.height - ICON_SIZE) / 2) - offset.top;
+  let left = rect.right + ICON_GAP - offset.left;
   const viewW = overlayWin.innerWidth;
-  if (left + ICON_SIZE > viewW - 4) {
-    left = rect.left - ICON_GAP - ICON_SIZE;
+  const viewLeft = rect.left - ICON_GAP - ICON_SIZE - offset.left;
+  if (rect.right + ICON_GAP - offset.left + ICON_SIZE > viewW - 4) {
+    left = viewLeft;
   }
   anchor.style.top = `${top}px`;
   anchor.style.left = `${left}px`;
@@ -1022,8 +1042,10 @@ function selectPasswordText(outEl) {
 function openForField(input, options = {}) {
   closePanel({ animated: false });
   const remote = options.remote ?? null;
-  const overlayDoc = options.overlayDoc ?? resolveOverlayTarget(input).overlayDoc;
-  const getRect = options.getRect ?? resolveOverlayTarget(input).getRect;
+  const overlayTarget = input ? resolveOverlayTarget(input) : null;
+  const overlayDoc = options.overlayDoc ?? overlayTarget?.overlayDoc ?? document;
+  const getRect = options.getRect ?? overlayTarget?.getRect ?? (() => new DOMRect(0, 0, 0, 0));
+  const mountRoot = options.mountRoot ?? overlayTarget?.mountRoot ?? null;
   const overlayWin = overlayDoc.defaultView ?? window;
   const site = resolveSiteFromHostname(location.hostname);
 
@@ -1090,7 +1112,7 @@ function openForField(input, options = {}) {
     </form>
   `;
   shadow.appendChild(root);
-  getOverlayForDoc(overlayDoc).appendChild(host);
+  getOverlayForDoc(overlayDoc, mountRoot).appendChild(host);
 
   const labelEl = root.querySelector("label");
   const phraseEl = root.querySelector("#hiz-pwd-phrase");
@@ -1119,6 +1141,7 @@ function openForField(input, options = {}) {
     checkEl,
     copyTimer: 0,
     overlayDoc,
+    mountRoot,
     getRect,
     overlayWin,
     enterAnimating: false,
@@ -1135,6 +1158,11 @@ function openForField(input, options = {}) {
     panelState.applyDebounceTimer = window.setTimeout(() => {
       void flushApplyPassword(panelState);
     }, APPLY_IDLE_MS);
+  }
+
+  function displayedPasswordValue(el) {
+    const text = el.textContent?.trim() ?? "";
+    return text.length === PASSWORD_LENGTH ? text : "";
   }
 
   async function flushApplyPassword(panelState, password = panelState.pendingApplyPassword) {
@@ -1167,12 +1195,12 @@ function openForField(input, options = {}) {
       setResultExpanded(panelState, false);
       return null;
     }
-    setResultExpanded(panelState, true);
     const serial = ++deriveSerial;
-    if (!outEl.textContent || outEl.classList.contains("is-pending")) {
-      outEl.textContent = "Deriving…";
+    if (displayedPasswordValue(outEl)) {
+      outEl.classList.remove("is-pending");
+    } else {
+      outEl.textContent = "";
       outEl.classList.add("is-pending");
-      finishPanelHeightLayout(panelState);
     }
     errEl.hidden = true;
     try {
@@ -1180,13 +1208,14 @@ function openForField(input, options = {}) {
       if (!siteKey) {
         errEl.hidden = false;
         errEl.textContent = "Enter a site name.";
+        finishPanelHeightLayout(panelState);
         return null;
       }
       const password = await generatePassword(phrase, siteKey);
       if (serial !== deriveSerial) return null;
       outEl.textContent = password;
       outEl.classList.remove("is-pending");
-      finishPanelHeightLayout(panelState);
+      setResultExpanded(panelState, true);
       scheduleApplyPassword(panelState, password);
       return password;
     } catch (error) {
@@ -1195,7 +1224,6 @@ function openForField(input, options = {}) {
       outEl.classList.add("is-pending");
       errEl.hidden = false;
       errEl.textContent = error instanceof Error ? error.message : "Could not generate password.";
-      setResultExpanded(panelState, true);
       finishPanelHeightLayout(panelState);
       return null;
     }
@@ -1262,9 +1290,7 @@ function openForField(input, options = {}) {
   phraseEl.addEventListener("input", () => {
     clearCopyCheck(panelState);
     unlockPhraseInput(phraseEl);
-    if (phraseEl.value.trim()) {
-      setResultExpanded(panelState, true);
-    } else {
+    if (!phraseEl.value.trim()) {
       outEl.textContent = "";
       outEl.classList.add("is-pending");
       errEl.hidden = true;
@@ -1297,9 +1323,8 @@ function openForField(input, options = {}) {
   });
 
   outEl.addEventListener("click", async () => {
-    if (outEl.classList.contains("is-pending")) return;
-    const text = outEl.textContent?.trim();
-    if (!text || text === "Deriving…") return;
+    const text = displayedPasswordValue(outEl);
+    if (!text) return;
     selectPasswordText(outEl);
     await copyText(text);
     showCopyCheck(panelState);
@@ -1310,6 +1335,9 @@ function openForField(input, options = {}) {
     root.style.transition = "none";
     layoutPanel(host, root, phraseEl, getRect, overlayWin);
   };
+  host.addEventListener("mousedown", (event) => event.stopPropagation(), true);
+  host.addEventListener("pointerdown", (event) => event.stopPropagation(), true);
+
   openPanel = panelState;
   panelState.enterAnimating = true;
   panelState.closing = false;
@@ -1329,7 +1357,7 @@ function attachToField(input) {
 
   tracked.add(input);
 
-  const { overlayDoc, getRect } = resolveOverlayTarget(input);
+  const { overlayDoc, getRect, mountRoot } = resolveOverlayTarget(input);
   const anchor = overlayDoc.createElement("button");
   anchor.type = "button";
   anchor.className = "hiz-pwd-anchor";
@@ -1339,9 +1367,9 @@ function attachToField(input) {
   img.src = ICON_URL;
   img.alt = "";
   anchor.appendChild(img);
-  getOverlayForDoc(overlayDoc).appendChild(anchor);
+  getOverlayForDoc(overlayDoc, mountRoot).appendChild(anchor);
   anchors.set(input, anchor);
-  anchorBindings.set(input, { anchor, input, overlayDoc, getRect, lastRectKey: "" });
+  anchorBindings.set(input, { anchor, input, overlayDoc, mountRoot, getRect, lastRectKey: "" });
   installGlobalReposition();
   placeNearField(anchor, getRect, overlayDoc.defaultView ?? window);
 

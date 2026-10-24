@@ -1,4 +1,5 @@
-const STORAGE_KEY = "hizPwdUsernameBySite";
+export const USERNAME_STORAGE_KEY = "hizPwdUsernameBySite";
+const STORAGE_KEY = USERNAME_STORAGE_KEY;
 
 const USERNAME_HINT_RE =
   /user|email|e-mail|login|log-?in|account|identifier|signin|sign-in|userid|user-id|username|member|customer/i;
@@ -113,4 +114,13 @@ export async function setStoredUsername(siteKey, entry) {
     descriptor: entry.descriptor || null,
   };
   await chrome.storage.local.set({ [STORAGE_KEY]: map });
+}
+
+export async function clearStoredUsername(siteKey) {
+  if (!siteKey) return false;
+  const map = await readMap();
+  if (!(siteKey in map)) return false;
+  delete map[siteKey];
+  await chrome.storage.local.set({ [STORAGE_KEY]: map });
+  return true;
 }

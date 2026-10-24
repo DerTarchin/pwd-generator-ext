@@ -3,7 +3,18 @@
   "name": "Password Generator",
   "version": "1.0.0",
   "description": "Deterministic site passwords from your master passphrase (same as hiz.al/pwd).",
-  "permissions": ["clipboardWrite", "storage"],
+  "permissions": ["clipboardWrite", "storage", "activeTab"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "action": {
+    "default_title": "Password Generator",
+    "default_popup": "popup.html"
+  },
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
