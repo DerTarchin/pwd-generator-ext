@@ -5,7 +5,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
-import { fillPassphrase, fillSite, panelFrame, panelText, waitForPanelOpen, waitForPanelPassword } from "./panel-frame-helpers.mjs";
+import {
+  fillPassphrase,
+  fillSite,
+  panelFrame,
+  panelShadow,
+  panelShadowElement,
+  panelText,
+  waitForPanelOpen,
+  waitForPanelPassword,
+} from "./panel-frame-helpers.mjs";
 
 // Same vectors as scripts/test-crypto.mjs and the web app.
 const AMAZON_V1 = "EhQD!pe0yi80VsnVt";
@@ -39,12 +48,19 @@ const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir()
 });
 const page = await context.newPage();
 
-const shadow = (selector) => `.hiz-pwd-panel-host >> ${selector}`;
 const output = () => panelText(page, "#hiz-pwd-out");
 const label = () => panelText(page, "#hiz-pwd-version");
-const menuItems = () => page.evaluate(() => [...[...document.querySelectorAll(".hiz-pwd-panel-host")]
-  .flatMap((h) => [...(h.shadowRoot?.querySelectorAll("#hiz-pwd-version-menu:not([hidden]) button") ?? [])])]
+// The menu is in the panel's closed shadow root, reached through the frame element.
+const menuItems = async () => (await panelShadow(page)).evaluate((root) => [...root.querySelectorAll("#hiz-pwd-version-menu:not([hidden]) button")]
   .map((button) => `${button.textContent}${button.getAttribute("aria-selected") === "true" ? "*" : ""}`));
+const menuOption = (index) => panelShadowElement(page, "#hiz-pwd-version-menu:not([hidden]) button", index);
+async function waitForMenuItems(count, message) {
+  for (let i = 0; i < 200; i += 1) {
+    if ((await menuItems()).length === count) return;
+    await page.waitForTimeout(50);
+  }
+  throw new Error(`timed out: ${message}`);
+}
 
 async function waitFor(fn, arg, message) {
   try {
@@ -69,7 +85,7 @@ await openPanel();
 await outIs(AMAZON_V1);
 if (await label() !== "v1") throw new Error(`expected v1 label, got ${await label()}`);
 
-const box = async (selector) => panelFrame(page).locator(selector).boundingBox();
+const box = async (selector) => (await panelFrame(page)).locator(selector).boundingBox();
 const [siteBox, versionBox, phraseBox] = await Promise.all(["#hiz-pwd-site", "#hiz-pwd-version", "#hiz-pwd-phrase"].map(box));
 const layout = {
   siteRight: siteBox.x + siteBox.width,
@@ -80,14 +96,11 @@ const layout = {
 if (layout.versionLeft < layout.siteRight - 0.5) throw new Error(`v1 overlaps the site text: ${JSON.stringify(layout)}`);
 if (Math.abs(layout.versionRight - layout.phraseRight) > 1) throw new Error(`v1 not flush with the input's right edge: ${JSON.stringify(layout)}`);
 
-await panelFrame(page).locator("#hiz-pwd-version").click();
-await waitFor(() => [...document.querySelectorAll(".hiz-pwd-panel-host")].some((h) => h.shadowRoot?.querySelector("#hiz-pwd-version-menu")?.hidden === false), null, "menu open");
+await (await panelFrame(page)).locator("#hiz-pwd-version").click();
+await waitForMenuItems(2, "menu open");
 const items = await menuItems();
 if (JSON.stringify(items) !== JSON.stringify(["v1current*", "v2alternative"])) throw new Error(`menu items: ${items}`);
-const visible = await page.evaluate(() => {
-  const sr = [...document.querySelectorAll(".hiz-pwd-panel-host")]
-    .map((h) => h.shadowRoot)
-    .find((r) => r?.querySelector("#hiz-pwd-version-menu:not([hidden])"));
+const visible = await (await panelShadow(page)).evaluate((sr) => {
   return [...sr.querySelectorAll("#hiz-pwd-version-menu button")].every((button) => {
     const box = button.getBoundingClientRect();
     const hit = sr.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
@@ -97,7 +110,7 @@ const visible = await page.evaluate(() => {
 if (!visible) throw new Error("menu items are clipped or covered");
 if (process.env.SHOT_DIR) await page.screenshot({ path: `${process.env.SHOT_DIR}/ext-version-menu.png` });
 
-await page.locator(shadow("#hiz-pwd-version-menu:not([hidden]) button")).nth(1).click();
+await (await menuOption(1)).click();
 await outIs(AMAZON_V2);
 if (await label() !== "v2") throw new Error(`expected v2 label, got ${await label()}`);
 await page.waitForTimeout(800);
@@ -108,11 +121,11 @@ await waitFor((want) => document.querySelector("#pw")?.value === want, AMAZON_V2
 await openPanel();
 await outIs(AMAZON_V2);
 if (await label() !== "v2") throw new Error("v2 not remembered after reload");
-await panelFrame(page).locator("#hiz-pwd-version").click();
-await waitFor(() => [...document.querySelectorAll(".hiz-pwd-panel-host")].some((h) => h.shadowRoot?.querySelectorAll("#hiz-pwd-version-menu:not([hidden]) button").length === 3), null, "menu grows");
+await (await panelFrame(page)).locator("#hiz-pwd-version").click();
+await waitForMenuItems(3, "menu grows");
 const grown = await menuItems();
 if (JSON.stringify(grown) !== JSON.stringify(["v1current", "v2alternative*", "v3"])) throw new Error(`grown menu items: ${grown}`);
-await page.locator(shadow("#hiz-pwd-version-menu:not([hidden]) button")).nth(0).click();
+await (await menuOption(0)).click();
 await outIs(AMAZON_V1);
 if (await label() !== "v1") throw new Error("could not go back to v1");
 

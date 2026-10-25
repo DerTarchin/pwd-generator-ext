@@ -209,7 +209,7 @@ async function testExtension() {
   await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
   await page.waitForTimeout(500);
   await page.click(".hiz-pwd-anchor");
-  await panelFrame(page).locator("#hiz-pwd-site", { hasText: "Schwab From Storage" }).waitFor({ timeout: 30000 });
+  await (await panelFrame(page)).locator("#hiz-pwd-site", { hasText: "Schwab From Storage" }).waitFor({ timeout: 30000 });
 
   await context.close();
   server.close();

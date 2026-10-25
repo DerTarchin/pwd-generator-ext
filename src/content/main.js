@@ -301,9 +301,18 @@ function findFlyoutMountRoot(input) {
 function keepOverlayOnTop(parent) {
   const overlay = overlayByParent.get(parent);
   if (!overlay?.isConnected) return;
-  if (parent.lastElementChild !== overlay) {
-    parent.appendChild(overlay);
+  if (parent.lastElementChild === overlay) return;
+  // moveBefore keeps the panel frame alive; appendChild would reload it, which
+  // now closes the panel (see onPanelFrameLost).
+  if (typeof parent.moveBefore === "function") {
+    try {
+      parent.moveBefore(overlay, null);
+      return;
+    } catch {
+      /* fall through */
+    }
   }
+  parent.appendChild(overlay);
 }
 
 function getOverlayForDoc(overlayDoc, mountRoot = null) {
@@ -895,7 +904,7 @@ function destroyPanel(panel) {
   unbindPanelDismiss(panel);
   panel.destroyed = true;
   panel.resolveFrameReady?.();
-  if (panel.pendingDismiss) {
+  if (panel.pendingDismiss && !panel.compromised) {
     // The frame still has to answer with the password; remove it after.
     panel.host.style.visibility = "hidden";
     panel.root.style.pointerEvents = "none";
@@ -1055,7 +1064,10 @@ function createPanelShell(overlayDoc, mountRoot, inputW) {
   const host = overlayDoc.createElement("div");
   host.className = "hiz-pwd-panel-host";
   host.style.visibility = "hidden";
-  const shadow = host.attachShadow({ mode: "open" });
+  // Closed: page scripts get null from host.shadowRoot and cannot reach the
+  // frame inside (it is not in document.querySelectorAll or window.frames),
+  // so they cannot point it at a lookalike. Only panelState.shadow holds it.
+  const shadow = host.attachShadow({ mode: "closed" });
   const sheet = overlayDoc.createElement("link");
   sheet.rel = "stylesheet";
   sheet.href = PANEL_CSS_URL;
@@ -1138,7 +1150,14 @@ function createPanelShell(overlayDoc, mountRoot, inputW) {
     reposition: null,
   };
 
-  frame.addEventListener("load", () => connectPanelFrame(panelState, panelId), { once: true });
+  // The first load is ours. Any later one means the frame was reloaded or
+  // navigated somewhere else, and the panel is no longer trustworthy.
+  let frameLoads = 0;
+  frame.addEventListener("load", () => {
+    frameLoads += 1;
+    if (frameLoads === 1) connectPanelFrame(panelState, panelId);
+    else onPanelFrameLost(panelState, "reloaded or navigated");
+  });
 
   versionMenu.addEventListener("keydown", (event) => {
     const optionEls = [...versionMenu.querySelectorAll("button")];
@@ -1197,7 +1216,9 @@ function takeWarmPanel(overlayDoc, mountRoot) {
   const parent = mountRoot ?? overlayDoc.documentElement;
   const shell = warmPanel;
   warmPanel = null;
-  if (shell && !shell.destroyed && shell.parent === parent && shell.host.isConnected) return shell;
+  if (shell && !shell.destroyed && !shell.compromised && shell.parent === parent && shell.host.isConnected) {
+    return shell;
+  }
   if (shell) {
     warmPanel = shell;
     discardWarmPanel();
@@ -1260,7 +1281,11 @@ function connectPanelFrame(panelState, panelId) {
   port.onMessage.addListener((message) => onPanelFrameMessage(panelState, message));
   port.onDisconnect.addListener(() => {
     void chrome.runtime.lastError;
-    if (panelState.port === port) panelState.port = null;
+    if (panelState.port !== port) return;
+    panelState.port = null;
+    // We never disconnect first while the panel lives (removePanelHost clears
+    // panelState.port before removing the frame), so this is the frame going away.
+    onPanelFrameLost(panelState, "disconnected");
   });
   port.postMessage({
     type: "init",
@@ -1282,6 +1307,29 @@ function syncFrameWidth(panelState) {
   if (width === panelState.sentFrameWidth) return;
   panelState.sentFrameWidth = width;
   sendToPanel(panelState, { type: "frame-width", width });
+}
+
+/**
+ * The panel's frame must stay the one we loaded, connected for the panel's
+ * whole life. If it reloads, navigates, or drops its port (a lookalike swapped
+ * in would do all three), remove the panel at once, with no exit animation and
+ * without filling anything, instead of leaving our box around a frame we no
+ * longer control. The field's icon comes back; clicking it builds a new panel.
+ */
+function onPanelFrameLost(panelState, reason) {
+  if (panelState.destroyed || panelState.compromised) return;
+  panelState.compromised = true;
+  console.warn(`[hiz-pwd] panel frame ${reason}; removed the panel`);
+  panelState.resolveDismiss?.(null);
+  if (!panelState.opened) {
+    if (warmPanel === panelState) warmPanel = null;
+    panelState.destroyed = true;
+    panelState.resolveFrameReady?.();
+    removePanelHost(panelState);
+    return;
+  }
+  destroyPanel(panelState);
+  removePanelHost(panelState);
 }
 
 function sendToPanel(panelState, message) {
@@ -1346,7 +1394,7 @@ async function flushApplyPassword(panelState, password, siteKey) {
 }
 
 async function applyFromPanel(panelState, { password, siteKey, submit }) {
-  if (openPanel !== panelState || panelState.closing) return;
+  if (openPanel !== panelState || panelState.closing || panelState.compromised) return;
   await flushApplyPassword(panelState, password, siteKey);
   closePanel();
   if (!submit) return;
@@ -1369,6 +1417,7 @@ function requestDismissApply(panelState) {
     };
   })
     .then(async (message) => {
+      if (panelState.compromised) return;
       if (message?.password) await flushApplyPassword(panelState, message.password, message.siteKey);
     })
     .finally(() => {

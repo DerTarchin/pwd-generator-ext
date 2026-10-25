@@ -51,7 +51,7 @@ const clipboardAfterDerive = await page.evaluate(async () => {
   }
 });
 
-await panelFrame(page).locator("#hiz-pwd-out").click();
+await (await panelFrame(page)).locator("#hiz-pwd-out").click();
 
 await page.waitForTimeout(500);
 const clipboardAfterClick = await page.evaluate(async () => {

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
+import { panelBox, waitForPanelClosed, waitForPanelOpen } from "./panel-frame-helpers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const extPath = join(root, "dist");
@@ -43,23 +44,33 @@ await page.setViewportSize({ width: 900, height: 700 });
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
 
+// The panel box is in a closed shadow root; reach it through the frame element.
+async function rootStyle(prop) {
+  const root = await panelBox(page, 2000).catch(() => null);
+  return root ? root.evaluate((el, p) => getComputedStyle(el)[p], prop) : null;
+}
+
 async function readBoxes() {
-  return page.evaluate(() => {
+  const boxes = await page.evaluate(() => {
     const field = document.querySelector("#pw");
     const anchor = document.querySelector(".hiz-pwd-anchor");
-    const host = document.querySelector(".hiz-pwd-panel-host");
-    const root = host?.shadowRoot?.querySelector(".hiz-pwd-panel");
     const fr = field?.getBoundingClientRect();
     const ar = anchor?.getBoundingClientRect();
-    const pr = root?.getBoundingClientRect();
     return {
       vw: window.innerWidth,
       vh: window.innerHeight,
       field: fr ? { left: fr.left, top: fr.top, width: fr.width, height: fr.height } : null,
       anchor: ar ? { left: ar.left, top: ar.top, width: ar.width, height: ar.height } : null,
-      panel: pr ? { left: pr.left, top: pr.top, width: pr.width, height: pr.height } : null,
     };
   });
+  const root = await panelBox(page, 2000).catch(() => null);
+  boxes.panel = root
+    ? await root.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return { left: r.left, top: r.top, width: r.width, height: r.height };
+    })
+    : null;
+  return boxes;
 }
 
 function panelAllowedRegion(boxes) {
@@ -98,13 +109,7 @@ function assertPanelInRegion(panel, region, label) {
 
 for (let run = 0; run < OPENS; run += 1) {
   await page.click(".hiz-pwd-anchor");
-  await page.waitForFunction(
-    () => {
-      const host = document.querySelector(".hiz-pwd-panel-host");
-      return Boolean(host?.shadowRoot?.querySelector(".hiz-pwd-panel"));
-    },
-    { timeout: 10000 },
-  );
+  await waitForPanelOpen(page, 10000);
 
   const samples = Math.max(6, Math.ceil(PANEL_ENTER_MS / 120));
   for (let s = 0; s < samples; s += 1) {
@@ -127,25 +132,19 @@ for (let run = 0; run < OPENS; run += 1) {
     throw new Error(`open ${run + 1} final: panel not aligned over field (Δx=${Math.abs(panelMidX - fieldMidX)})`);
   }
 
-  const opacityBefore = await page.evaluate(() => {
-    const root = document.querySelector(".hiz-pwd-panel-host")?.shadowRoot?.querySelector(".hiz-pwd-panel");
-    return root ? Number.parseFloat(getComputedStyle(root).opacity) : 0;
-  });
+  const exitRoot = await panelBox(page);
+  const opacityBefore = await exitRoot.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity));
   await page.keyboard.press("Escape");
   await page.waitForTimeout(60);
-  const opacityMid = await page.evaluate(() => {
-    const root = document.querySelector(".hiz-pwd-panel-host")?.shadowRoot?.querySelector(".hiz-pwd-panel");
-    return root ? Number.parseFloat(getComputedStyle(root).opacity) : 0;
-  });
+  const opacityMid = await exitRoot.evaluate((el) => Number.parseFloat(getComputedStyle(el).opacity)).catch(() => 0);
   const exitAnimating = opacityBefore > 0.9 && opacityMid < 0.98;
-  const hasExitWaapi = await page.evaluate(() => {
-    const root = document.querySelector(".hiz-pwd-panel-host")?.shadowRoot?.querySelector(".hiz-pwd-panel");
-    return Boolean(root?.getAnimations?.().some((a) => a.playState === "running" || a.playState === "pending"));
-  });
+  const hasExitWaapi = await exitRoot
+    .evaluate((el) => el.getAnimations().some((a) => a.playState === "running" || a.playState === "pending"))
+    .catch(() => false);
   if (!exitAnimating && !hasExitWaapi) {
     throw new Error(`open ${run + 1}: exit did not fade (before=${opacityBefore} mid=${opacityMid})`);
   }
-  await page.waitForFunction(() => !document.querySelector(".hiz-pwd-panel-host"), { timeout: 5000 });
+  await waitForPanelClosed(page, 5000);
 }
 
 console.log("panel enter animation ok", { opens: OPENS, panelEnterMs: PANEL_ENTER_MS });

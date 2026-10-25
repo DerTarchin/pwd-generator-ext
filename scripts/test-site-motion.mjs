@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
+import { panelBox, waitForPanelOpen } from "./panel-frame-helpers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const extPath = join(root, "dist");
@@ -50,11 +51,11 @@ const context = await chromium.launchPersistentContext(userDataDir, {
   args: [`--disable-extensions-except=${extPath}`, `--load-extension=${extPath}`],
 });
 
+// The panel box is in a closed shadow root; reach it through the frame element.
 async function panelMetrics(page) {
-  return page.evaluate(() => {
-    const host = document.querySelector(".hiz-pwd-panel-host");
-    const root = host?.shadowRoot?.querySelector(".hiz-pwd-panel");
-    if (!root) return null;
+  const box = await panelBox(page, 2000).catch(() => null);
+  if (!box) return null;
+  return box.evaluate((root) => {
     const cs = getComputedStyle(root);
     const anims = root.getAnimations().map((a) => ({
       play: a.playState,
@@ -82,10 +83,7 @@ for (const site of SITES) {
     await waitForPasswordContext(page);
     await page.waitForSelector(".hiz-pwd-anchor", { timeout: 90000 });
     await page.locator(".hiz-pwd-anchor").first().click({ timeout: 15000 });
-    await page.waitForFunction(
-      () => document.querySelector(".hiz-pwd-panel-host")?.shadowRoot?.querySelector(".hiz-pwd-panel"),
-      { timeout: 15000 },
-    );
+    await waitForPanelOpen(page, 15000);
     await page.waitForTimeout(80);
     const enter = await panelMetrics(page);
     const enterAnimating =
