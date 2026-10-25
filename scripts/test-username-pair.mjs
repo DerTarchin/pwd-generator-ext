@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
+import { fillPassphrase, waitForPanelOpen } from "./panel-frame-helpers.mjs";
 import { generatePassword } from "../src/lib/crypto.js";
 import { resolveSiteFromHostname } from "../src/lib/site-resolve.js";
 
@@ -53,7 +54,7 @@ await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
 await page.fill("#email", testEmail);
 await page.click(".hiz-pwd-anchor");
-await page.fill("#hiz-pwd-phrase", "test-passphrase");
+await fillPassphrase(page, "test-passphrase");
 await page.mouse.click(5, 5);
 await page.waitForFunction(
   (expected) => document.querySelector("#pw")?.value === expected,
@@ -76,22 +77,14 @@ if (emailAfterReload !== testEmail) {
 await waitForOpenPanel(page);
 
 await page.goto(`http://127.0.0.1:${port}/password-only`, { waitUntil: "domcontentloaded" });
-await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
+// The panel opens by itself here, so the field's icon is (correctly) hidden.
+await page.waitForSelector(".hiz-pwd-anchor", { state: "attached", timeout: 15000 });
 await waitForOpenPanel(page);
 
 console.log("username remember/autofill ok", { siteKey: site.siteKey, email: testEmail });
 
 async function waitForOpenPanel(page) {
-  await page.waitForFunction(
-    () => {
-      const host = document.querySelector(".hiz-pwd-panel-host");
-      const panel = host?.shadowRoot?.querySelector(".hiz-pwd-panel");
-      if (!panel) return false;
-      const style = getComputedStyle(panel);
-      return style.visibility === "visible" && Number(style.opacity) > 0.5;
-    },
-    { timeout: 10000 },
-  );
+  await waitForPanelOpen(page, 10000);
 }
 
 await context.close();

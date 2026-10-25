@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
+import { panelFrame } from "./panel-frame-helpers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const extPath = join(root, "dist");
@@ -208,10 +209,7 @@ async function testExtension() {
   await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
   await page.waitForTimeout(500);
   await page.click(".hiz-pwd-anchor");
-  await page.waitForFunction(() => {
-    const host = document.querySelector(".hiz-pwd-panel-host");
-    return host?.shadowRoot?.querySelector("#hiz-pwd-site")?.textContent === "Schwab From Storage";
-  });
+  await panelFrame(page).locator("#hiz-pwd-site", { hasText: "Schwab From Storage" }).waitFor({ timeout: 30000 });
 
   await context.close();
   server.close();

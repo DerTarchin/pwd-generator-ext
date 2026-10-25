@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
+import { fillPassphrase } from "./panel-frame-helpers.mjs";
 import { generatePassword } from "../src/lib/crypto.js";
 import { resolveSiteFromHostname } from "../src/lib/site-resolve.js";
 
@@ -46,7 +47,7 @@ await page.evaluate(() => {
 
 await page.evaluate(() => document.querySelector(".hiz-pwd-anchor")?.click());
 await page.waitForSelector(".hiz-pwd-panel-host", { timeout: 15000 });
-await page.fill("#hiz-pwd-phrase", "test-passphrase");
+await fillPassphrase(page, "test-passphrase");
 await page.keyboard.press("Enter");
 
 await page.waitForFunction(

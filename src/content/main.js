@@ -1,9 +1,6 @@
 import { copyText } from "../lib/copy.js";
-import { generatePassword } from "../lib/crypto-client.js";
-import { PASSWORD_LENGTH } from "../lib/derive.js";
-import { getSiteVersion, setSiteVersion } from "../lib/site-versions.js";
+import { PANEL_PORT_PREFIX } from "../lib/panel-port.js";
 import { resolveSiteFromHostname } from "../lib/site-resolve.js";
-import { cleanHostInput, rowForInput } from "../lib/sites.js";
 import {
   findPairedUsernameField,
   getStoredUsername,
@@ -14,12 +11,13 @@ import {
 
 const ICON_URL = chrome.runtime.getURL("icons/icon-48.png");
 const PANEL_CSS_URL = chrome.runtime.getURL("panel.css");
+// The form (passphrase, site, result) lives in this extension-origin frame so
+// the page can never read it. See src/panel/panel.js.
+const PANEL_FRAME_URL = chrome.runtime.getURL("panel.html");
+const PANEL_FRAME_TIMEOUT_MS = 5000;
 const PANEL_PAD = 16;
 const INPUT_MIN_W = 225;
 const INPUT_MAX_W = 500;
-const COPY_FEEDBACK_MS = 2000;
-/** Argon2id at 64 MiB takes a noticeable moment; derive once typing pauses. */
-const DERIVE_IDLE_MS = 250;
 const POSITION_POLL_MS = 100;
 /** ~30% faster than the original 380ms enter. */
 const PANEL_ENTER_MOTION_MS = 292;
@@ -30,31 +28,10 @@ const PANEL_EASE = "cubic-bezier(0.2, 0.85, 0.25, 1)";
 const PANEL_EXIT_MS = 200;
 const ICON_HOVER_SCALE = 1.5;
 
-const CHECKMARK_SVG = `
-<svg viewBox="0 0 24 24" aria-hidden="true">
-  <defs>
-    <linearGradient id="hiz-pwd-copy-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#8eb0ff"></stop>
-      <stop offset="50%" stop-color="#d08cff"></stop>
-      <stop offset="100%" stop-color="#8eb0ff"></stop>
-      <animateTransform
-        attributeName="gradientTransform"
-        type="translate"
-        dur="2.2s"
-        repeatCount="indefinite"
-        calcMode="spline"
-        keyTimes="0;0.5;1"
-        keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
-        values="-10 -10;10 10;-10 -10"
-      ></animateTransform>
-    </linearGradient>
-  </defs>
-  <path d="M5 12.5 9.5 17 19 7.5" fill="none" stroke="url(#hiz-pwd-copy-grad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
-</svg>`;
-
 const MSG = "hiz-pwd-ce";
 const tracked = new WeakSet();
 const usernameAutofillDone = new WeakSet();
+const prewarmListeners = new WeakSet();
 const anchors = new Map();
 const anchorBindings = new Map();
 const overlayByParent = new WeakMap();
@@ -64,7 +41,6 @@ const remoteIntervals = new Map();
 const topRemoteFields = new Map();
 const pendingRemotePanelOpens = new Set();
 let openPanel = null;
-let deriveSerial = 0;
 let globalRepositionInstalled = false;
 let positionPollId = 0;
 let topBridgeInstalled = false;
@@ -235,6 +211,12 @@ function ensureTopRemoteAnchor(fieldId, childWin, iframe) {
       remote: { fieldId, childWin },
     });
   });
+  const prewarmRemote = () => {
+    const entry = topRemoteFields.get(fieldId);
+    if (entry) prewarmPanel(overlayDoc, null, entry.getRect);
+  };
+  anchor.addEventListener("pointerenter", prewarmRemote);
+  anchor.addEventListener("focus", prewarmRemote);
 }
 
 function installChildBridge() {
@@ -450,6 +432,7 @@ if (!isExtensionContext()) {
 
 function isPasswordField(el) {
   if (!(el instanceof HTMLInputElement)) return false;
+  if (el.hasAttribute("data-hiz-pwd-ignore")) return false;
   if (el.type === "password") return true;
   const hint = `${el.name} ${el.id} ${el.autocomplete}`.toLowerCase();
   return el.type === "text" && /password|passwd|pwd/.test(hint);
@@ -521,9 +504,6 @@ async function rememberUsernameForSite(passwordInput, siteKey) {
   await setStoredUsername(siteKey, { value, descriptor });
 }
 
-function unlockPhraseInput(phraseEl) {
-  phraseEl.removeAttribute("readonly");
-}
 
 function clampInputWidth(width) {
   return Math.min(INPUT_MAX_W, Math.max(INPUT_MIN_W, width));
@@ -656,30 +636,42 @@ function layoutPanel(host, root, phraseEl, getRect, overlayWin) {
   return panelViewportBox(root);
 }
 
-function finishPanelHeightLayout(panelState) {
-  const { host, root, phraseEl, getRect, overlayWin } = panelState;
-  window.clearTimeout(panelState.heightSyncTimer);
-  panelState.heightAnimating = false;
-  root.style.transition = "none";
-  layoutPanel(host, root, phraseEl, getRect, overlayWin);
-}
 
-function setResultExpanded(panelState, expanded, { animate = true } = {}) {
-  if (!panelState.resultEl || panelState.resultExpanded === expanded) return;
-  const { host, root, phraseEl, getRect, overlayWin } = panelState;
+/**
+ * The frame reports its content height and field positions. A change in the
+ * result row animates the panel height exactly as the in-page form used to;
+ * anything else (errors, wrapping) re-lays out without animation.
+ */
+function applyFrameMetrics(panelState, metrics) {
+  const prev = panelState.metrics;
+  panelState.metrics = metrics;
+  const { host, root, frame, phraseEl, getRect, overlayWin } = panelState;
+  frame.style.height = `${metrics.height}px`;
+  if (!prev) {
+    panelState.resolveFrameReady?.();
+    return;
+  }
+  if (!panelState.opened) return;
+  const expandedChanged = metrics.resultExpanded !== prev.resultExpanded;
+  if (!expandedChanged) {
+    if (metrics.height === prev.height) return;
+    if (panelState.enterAnimating || panelState.heightAnimating) return;
+    root.style.transition = "none";
+    layoutPanel(host, root, phraseEl, getRect, overlayWin);
+    syncFrameWidth(panelState);
+    positionVersionMenu(panelState);
+    return;
+  }
   if (panelState.enterAnimating || panelState.closing) {
-    panelState.resultExpanded = expanded;
-    panelState.resultEl.classList.toggle("is-collapsed", !expanded);
     root.style.transition = "none";
     layoutPanel(host, root, phraseEl, getRect, overlayWin);
     return;
   }
 
+  frame.style.height = `${prev.height}px`;
   const fromBox = panelViewportBox(root);
   const fromH = fromBox.height;
-
-  panelState.resultExpanded = expanded;
-  panelState.resultEl.classList.toggle("is-collapsed", !expanded);
+  frame.style.height = `${metrics.height}px`;
 
   window.clearTimeout(panelState.heightSyncTimer);
   panelState.heightAnimating = false;
@@ -687,7 +679,7 @@ function setResultExpanded(panelState, expanded, { animate = true } = {}) {
   const box = layoutPanel(host, root, phraseEl, getRect, overlayWin);
   const toH = box.height;
 
-  if (!animate || prefersReducedMotion(overlayWin) || Math.abs(fromH - toH) < 2) return;
+  if (prefersReducedMotion(overlayWin) || Math.abs(fromH - toH) < 2) return;
 
   applyPanelViewportBox(host, root, {
     left: fromBox.left,
@@ -713,8 +705,9 @@ function setResultExpanded(panelState, expanded, { animate = true } = {}) {
   });
 }
 
-function waitForPanelReady(sheet, root) {
-  return new Promise((resolve) => {
+
+function waitForPanelReady(sheet, root, frameReady) {
+  const sheetReady = new Promise((resolve) => {
     const finish = () => {
       let attempts = 0;
       const tick = () => {
@@ -735,6 +728,7 @@ function waitForPanelReady(sheet, root) {
     sheet.addEventListener("load", finish, { once: true });
     sheet.addEventListener("error", finish, { once: true });
   });
+  return Promise.all([sheetReady, frameReady]);
 }
 
 function hoveredIconRect(anchor) {
@@ -808,6 +802,7 @@ function runPanelEnterAnimation(host, root, anchor, finalLayout, panelState, ove
     root.style.borderRadius = `${PANEL_RADIUS_PX}px`;
     revealPanel();
     panelState.enterAnimating = false;
+    syncFrameWidth(panelState);
   };
 
   if (!start || !isValidPanelBox(final, overlayWin)) {
@@ -838,12 +833,20 @@ function runPanelEnterAnimation(host, root, anchor, finalLayout, panelState, ove
     panelState.enterAnimating = false;
     root.style.transition = "none";
     applyPanelViewportBox(host, root, final);
+    syncFrameWidth(panelState);
   }, motionMs + 40);
 }
 
 function finalizePanelLayout(host, root, phraseEl, getRect, overlayWin, anchor, panelState, sheet, onReady) {
   panelState.enterAnimating = true;
-  void waitForPanelReady(sheet, root).then(() => {
+  void waitForPanelReady(sheet, root, panelState.frameReady).then(() => {
+    if (panelState.destroyed || !panelState.metrics) {
+      if (!panelState.destroyed) {
+        console.warn("[hiz-pwd] panel frame did not load");
+        if (openPanel === panelState) destroyPanel(panelState);
+      }
+      return;
+    }
     root.style.visibility = "hidden";
     root.style.opacity = "0";
     root.style.pointerEvents = "none";
@@ -886,13 +889,30 @@ function bindPanelDismiss(panel) {
 function destroyPanel(panel) {
   window.clearTimeout(panel.enterEndTimer);
   window.clearTimeout(panel.heightSyncTimer);
-  window.clearTimeout(panel.deriveTimer);
   window.clearTimeout(closePanelTimer);
   cancelPanelAnimations(panel.root);
   unbindPanelDismiss(panel);
-  panel.host.remove();
+  panel.destroyed = true;
+  panel.resolveFrameReady?.();
+  if (panel.pendingDismiss) {
+    // The frame still has to answer with the password; remove it after.
+    panel.host.style.visibility = "hidden";
+    panel.root.style.pointerEvents = "none";
+  } else {
+    removePanelHost(panel);
+  }
   setAnchorVisible(panel.anchor, true);
   if (openPanel === panel) openPanel = null;
+}
+
+function removePanelHost(panel) {
+  try {
+    panel.port?.disconnect();
+  } catch {
+    /* already gone */
+  }
+  panel.port = null;
+  panel.host.remove();
 }
 
 function closePanel({ animated = true } = {}) {
@@ -943,21 +963,7 @@ function closePanel({ animated = true } = {}) {
   closePanelTimer = window.setTimeout(finishExit, PANEL_EXIT_MS + 60);
 }
 
-function clearCopyCheck(panel) {
-  if (!panel?.checkEl) return;
-  window.clearTimeout(panel.copyTimer);
-  panel.copyTimer = 0;
-  panel.checkEl.hidden = true;
-}
 
-function showCopyCheck(panel) {
-  if (!panel?.checkEl) return;
-  panel.checkEl.hidden = false;
-  window.clearTimeout(panel.copyTimer);
-  panel.copyTimer = window.setTimeout(() => {
-    panel.checkEl.hidden = true;
-  }, COPY_FEEDBACK_MS);
-}
 
 function findSubmitControl(input) {
   const doc = input.ownerDocument;
@@ -1033,51 +1039,17 @@ function submitPasswordField(input) {
   requestAnimationFrame(() => requestAnimationFrame(fire));
 }
 
-function siteKeyFromSiteEl(siteEl) {
-  const text = (siteEl.textContent ?? "").trim();
-  if (!text) return "";
-  const row = rowForInput(text);
-  return row ? row.key : text.toLowerCase();
-}
 
-function normalizeSiteElLabel(siteEl) {
-  const text = (siteEl.textContent ?? "").trim();
-  if (!text) return;
-  const row = rowForInput(text);
-  if (row && siteEl.textContent !== row.name) {
-    siteEl.textContent = row.name;
-  }
-}
 
-function selectPasswordText(outEl) {
-  const doc = outEl.ownerDocument;
-  const range = doc.createRange();
-  range.selectNodeContents(outEl);
-  const sel = doc.defaultView?.getSelection();
-  sel?.removeAllRanges();
-  sel?.addRange(range);
-}
 
-function openForField(input, options = {}) {
-  closePanel({ animated: false });
-  const remote = options.remote ?? null;
-  const overlayTarget = input ? resolveOverlayTarget(input) : null;
-  const overlayDoc = options.overlayDoc ?? overlayTarget?.overlayDoc ?? document;
-  const getRect = options.getRect ?? overlayTarget?.getRect ?? (() => new DOMRect(0, 0, 0, 0));
-  const mountRoot = options.mountRoot ?? overlayTarget?.mountRoot ?? null;
+/**
+ * The panel's host, outer box, and frame, created hidden. Creating it on hover
+ * (see prewarmPanel) lets the frame load before the click, so the panel opens
+ * as fast as it did when the form lived in the page.
+ */
+function createPanelShell(overlayDoc, mountRoot, inputW) {
   const overlayWin = overlayDoc.defaultView ?? window;
   const site = resolveSiteFromHostname(location.hostname);
-
-  const anchor = remote
-    ? topRemoteFields.get(remote.fieldId)?.anchor
-    : anchors.get(input);
-  setAnchorVisible(anchor, false);
-  console.log("[hiz-pwd] site for password", {
-    hostname: location.hostname,
-    host: site.host,
-    siteKey: site.siteKey,
-    siteName: site.siteName,
-  });
 
   const host = overlayDoc.createElement("div");
   host.className = "hiz-pwd-panel-host";
@@ -1093,56 +1065,20 @@ function openForField(input, options = {}) {
   root.style.opacity = "0";
   root.style.visibility = "hidden";
   root.style.pointerEvents = "none";
-  root.innerHTML = `
-    <form class="hiz-pwd-form" autocomplete="off" data-lpignore="true" data-1p-ignore data-bwignore>
-      <label for="hiz-pwd-phrase">Passphrase</label>
-      <input
-        id="hiz-pwd-phrase"
-        class="hiz-pwd-phrase"
-        type="text"
-        name="hiz_pwd_phrase"
-        autocomplete="off"
-        autocapitalize="off"
-        autocorrect="off"
-        spellcheck="false"
-        inputmode="text"
-        aria-autocomplete="none"
-        data-form-type="other"
-        data-1p-ignore
-        data-lpignore="true"
-        data-bwignore
-        readonly
-      />
-      <div class="hiz-pwd-site-row">
-        <div
-          class="hiz-pwd-site"
-          id="hiz-pwd-site"
-          contenteditable="true"
-          spellcheck="false"
-          autocorrect="off"
-          autocapitalize="off"
-          role="textbox"
-          aria-label="Site"
-        ></div>
-        <button
-          class="hiz-pwd-version"
-          id="hiz-pwd-version"
-          type="button"
-          aria-haspopup="listbox"
-          aria-expanded="false"
-          aria-controls="hiz-pwd-version-menu"
-          aria-label="Password version 1"
-        >v1</button>
-      </div>
-      <div class="hiz-pwd-result is-collapsed" id="hiz-pwd-result">
-        <p class="hiz-pwd-password is-pending" id="hiz-pwd-out" aria-live="polite"></p>
-        <span class="hiz-pwd-check" id="hiz-pwd-check" hidden>${CHECKMARK_SVG}</span>
-      </div>
-      <p class="hiz-pwd-error" id="hiz-pwd-err" hidden></p>
-    </form>
-  `;
+
+  const panelId = crypto.randomUUID();
+  const frame = overlayDoc.createElement("iframe");
+  frame.className = "hiz-pwd-frame";
+  frame.title = "Password Generator";
+  frame.setAttribute("allow", "clipboard-write");
+  frame.setAttribute("scrolling", "no");
+  frame.setAttribute("tabindex", "-1");
+  root.style.setProperty("--input-w", `${inputW}px`);
+  frame.src = `${PANEL_FRAME_URL}#${panelId}`;
+  root.appendChild(frame);
   shadow.appendChild(root);
-  // Outside the panel root, which clips its overflow.
+
+  // Outside the panel root, which clips its overflow. Holds only version numbers.
   const versionMenu = overlayDoc.createElement("ul");
   versionMenu.className = "hiz-pwd-version-menu";
   versionMenu.id = "hiz-pwd-version-menu";
@@ -1152,385 +1088,352 @@ function openForField(input, options = {}) {
   shadow.appendChild(versionMenu);
   getOverlayForDoc(overlayDoc, mountRoot).appendChild(host);
 
-  const labelEl = root.querySelector("label");
-  const phraseEl = root.querySelector("#hiz-pwd-phrase");
-  const siteEl = root.querySelector("#hiz-pwd-site");
-  const resultEl = root.querySelector("#hiz-pwd-result");
-  const outEl = root.querySelector("#hiz-pwd-out");
-  const checkEl = root.querySelector("#hiz-pwd-check");
-  const errEl = root.querySelector("#hiz-pwd-err");
-  const versionBtn = root.querySelector("#hiz-pwd-version");
-  siteEl.textContent = site.siteName;
+  const frameRect = (inner) => {
+    const box = frame.getBoundingClientRect();
+    if (!inner) return new DOMRect(box.left, box.top, 0, 0);
+    return new DOMRect(box.left + inner.left, box.top + inner.top, inner.width, inner.height);
+  };
 
-  let lastApplied = "";
+  let resolveFrameReady = null;
+  const frameReady = new Promise((resolve) => {
+    resolveFrameReady = resolve;
+    window.setTimeout(resolve, PANEL_FRAME_TIMEOUT_MS);
+  });
 
   const panelState = {
     host,
     root,
-    phraseEl,
-    input,
-    remote,
-    anchor,
-    resultEl,
-    resultExpanded: false,
+    frame,
+    shadow,
+    sheet,
+    versionMenu,
+    // Stand-ins for elements inside the frame, for the layout code.
+    phraseEl: { getBoundingClientRect: () => frameRect(panelState.metrics?.phrase) },
+    versionAnchor: { getBoundingClientRect: () => frameRect(panelState.metrics?.version) },
+    metrics: null,
+    port: null,
+    frameReady,
+    resolveFrameReady,
+    parent: mountRoot ?? overlayDoc.documentElement,
+    opened: false,
+    input: null,
+    remote: null,
+    anchor: null,
+    site,
+    lastApplied: "",
+    pendingDismiss: null,
+    resolveDismiss: null,
     heightSyncTimer: 0,
     heightAnimating: false,
-    deriveTimer: 0,
-    // The password for the current phrase, site, and version; "" while stale.
-    readyPassword: "",
-    applyOnDismiss: null,
-    checkEl,
-    copyTimer: 0,
     overlayDoc,
     mountRoot,
-    getRect,
+    getRect: () => new DOMRect(0, 0, 0, 0),
     overlayWin,
     enterAnimating: false,
     closing: false,
+    destroyed: false,
     enterEndTimer: 0,
     dismissDocs: null,
     reposition: null,
-    getSiteKey: () => siteKeyFromSiteEl(siteEl),
   };
 
-  function displayedPasswordValue(el) {
-    const text = el.textContent?.trim() ?? "";
-    return text.length === PASSWORD_LENGTH ? text : "";
-  }
-
-  /** Fills the page's password field (and copies). Only on Enter or a click outside. */
-  async function flushApplyPassword(panelState, password) {
-    if (!password || password === lastApplied) return;
-    lastApplied = password;
-    const { input, remote } = panelState;
-    const siteKey = panelState.getSiteKey?.() ?? site.siteKey;
-    if (remote?.childWin) {
-      remote.childWin.postMessage(
-        { source: MSG, type: "fill", fieldId: remote.fieldId, value: password, siteKey },
-        "*",
-      );
-    } else if (input) {
-      fillInput(input, password);
-      await rememberUsernameForSite(input, siteKey);
-    }
-    if (await copyText(password, { doc: panelState.overlayDoc })) {
-      showCopyCheck(panelState);
-    }
-  }
-
-  let versionKey = "";
-  let versionValue = 1;
-
-  async function refreshVersion() {
-    const siteKey = siteKeyFromSiteEl(siteEl);
-    const version = await getSiteVersion(siteKey);
-    if (siteKeyFromSiteEl(siteEl) !== siteKey) return versionValue;
-    versionKey = siteKey;
-    versionValue = version;
-    versionBtn.textContent = `v${version}`;
-    versionBtn.disabled = !siteKey;
-    versionBtn.setAttribute("aria-label", `Password version ${version}`);
-    return version;
-  }
-
-  function positionVersionMenu() {
-    if (versionMenu.hidden) return;
-    const btn = versionBtn.getBoundingClientRect();
-    const hostBox = host.getBoundingClientRect();
-    const height = versionMenu.offsetHeight;
-    const { vh } = overlayViewportSize(overlayWin);
-    const fitsBelow = btn.bottom + 6 + height <= vh - 4;
-    versionMenu.style.left = `${btn.right - hostBox.left}px`;
-    versionMenu.style.top = fitsBelow
-      ? `${btn.bottom - hostBox.top + 6}px`
-      : `${btn.top - hostBox.top - 6 - height}px`;
-  }
-
-  function closeVersionMenu() {
-    if (versionMenu.hidden) return;
-    versionMenu.hidden = true;
-    versionBtn.setAttribute("aria-expanded", "false");
-  }
-
-  async function openVersionMenu() {
-    const current = await refreshVersion();
-    const siteKey = versionKey;
-    if (!siteKey) return;
-    versionMenu.replaceChildren();
-    for (let version = 1; version <= current + 1; version += 1) {
-      const item = overlayDoc.createElement("li");
-      item.setAttribute("role", "presentation");
-      const option = overlayDoc.createElement("button");
-      option.type = "button";
-      option.setAttribute("role", "option");
-      option.setAttribute("aria-selected", version === current ? "true" : "false");
-      const label = overlayDoc.createElement("span");
-      label.textContent = `v${version}`;
-      option.append(label);
-      const noteText = version === current ? "current" : version === current + 1 ? "new" : "";
-      if (noteText) {
-        const note = overlayDoc.createElement("span");
-        note.className = "hiz-pwd-version-note";
-        note.textContent = noteText;
-        option.append(note);
-      }
-      option.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        void chooseVersion(siteKey, version);
-      });
-      item.append(option);
-      versionMenu.append(item);
-    }
-    versionMenu.hidden = false;
-    versionBtn.setAttribute("aria-expanded", "true");
-    positionVersionMenu();
-  }
-
-  async function chooseVersion(siteKey, version) {
-    closeVersionMenu();
-    if (siteKeyFromSiteEl(siteEl) !== siteKey) return;
-    if (version !== versionValue) await setSiteVersion(siteKey, version);
-    await refreshVersion();
-    clearCopyCheck(panelState);
-    void runDerive();
-  }
-
-  function scheduleDerive() {
-    window.clearTimeout(panelState.deriveTimer);
-    panelState.deriveTimer = window.setTimeout(() => {
-      panelState.deriveTimer = 0;
-      void runDerive();
-    }, DERIVE_IDLE_MS);
-  }
-
-  function markStale() {
-    panelState.readyPassword = "";
-  }
-
-  /** The current password, deriving now if typing has not settled yet. */
-  function currentPassword() {
-    if (panelState.readyPassword && !panelState.deriveTimer) {
-      return Promise.resolve(panelState.readyPassword);
-    }
-    return runDerive();
-  }
-
-  async function runDerive() {
-    window.clearTimeout(panelState.deriveTimer);
-    panelState.deriveTimer = 0;
-    markStale();
-    const phrase = phraseEl.value;
-    if (!phrase.trim()) {
-      outEl.textContent = "";
-      outEl.classList.add("is-pending");
-      errEl.hidden = true;
-      lastApplied = "";
-      setResultExpanded(panelState, false);
-      return null;
-    }
-    const serial = ++deriveSerial;
-    if (displayedPasswordValue(outEl)) {
-      outEl.classList.remove("is-pending");
-    } else {
-      outEl.textContent = "";
-      outEl.classList.add("is-pending");
-    }
-    errEl.hidden = true;
-    try {
-      const siteKey = siteKeyFromSiteEl(siteEl);
-      if (!siteKey) {
-        errEl.hidden = false;
-        errEl.textContent = "Enter a site name.";
-        finishPanelHeightLayout(panelState);
-        return null;
-      }
-      const version = await refreshVersion();
-      const password = await generatePassword(phrase, siteKey, version);
-      if (serial !== deriveSerial) return null;
-      outEl.textContent = password;
-      outEl.classList.remove("is-pending");
-      setResultExpanded(panelState, true);
-      panelState.readyPassword = password;
-      return password;
-    } catch (error) {
-      if (serial !== deriveSerial) return null;
-      outEl.textContent = "";
-      outEl.classList.add("is-pending");
-      errEl.hidden = false;
-      errEl.textContent = error instanceof Error ? error.message : "Could not generate password.";
-      finishPanelHeightLayout(panelState);
-      return null;
-    }
-  }
-
-  async function applyAndCloseFromEnter() {
-    const password = await currentPassword();
-    if (!password) return;
-    await flushApplyPassword(panelState, password);
-    closePanel();
-    if (remote?.childWin) {
-      remote.childWin.postMessage({ source: MSG, type: "submit-enter", fieldId: remote.fieldId }, "*");
-    } else {
-      submitPasswordField(input);
-    }
-  }
-
-  for (const eventName of ["mousedown", "keydown", "touchstart"]) {
-    phraseEl.addEventListener(eventName, () => unlockPhraseInput(phraseEl), { passive: true });
-  }
-
-  siteEl.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    event.stopPropagation();
-    normalizeSiteElLabel(siteEl);
-    if (!phraseEl.value.trim()) {
-      unlockPhraseInput(phraseEl);
-      phraseEl.focus({ preventScroll: true });
-      return;
-    }
-    void applyAndCloseFromEnter();
-  });
-
-  siteEl.addEventListener("paste", (event) => {
-    clearCopyCheck(panelState);
-    event.preventDefault();
-    const pasted = event.clipboardData?.getData("text/plain") ?? "";
-    const cleaned = cleanHostInput(pasted) || pasted.replace(/\s+/g, " ").trim();
-    siteEl.textContent = cleaned;
-    normalizeSiteElLabel(siteEl);
-    closeVersionMenu();
-    void refreshVersion();
-    if (!panelState.enterAnimating && !panelState.heightAnimating) {
-      root.style.transition = "none";
-      layoutPanel(host, root, phraseEl, getRect, overlayWin);
-    }
-    void runDerive();
-  });
-
-  siteEl.addEventListener("input", () => {
-    clearCopyCheck(panelState);
-    closeVersionMenu();
-    markStale();
-    if (!panelState.enterAnimating && !panelState.heightAnimating) {
-      root.style.transition = "none";
-      layoutPanel(host, root, phraseEl, getRect, overlayWin);
-    }
-    void refreshVersion();
-    scheduleDerive();
-  });
-
-  siteEl.addEventListener("blur", () => {
-    normalizeSiteElLabel(siteEl);
-    void refreshVersion();
-  });
-
-  versionBtn.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    if (versionMenu.hidden) void openVersionMenu();
-    else closeVersionMenu();
-  });
-
-  versionBtn.addEventListener("keydown", (event) => {
-    if (event.key !== "ArrowDown") return;
-    event.preventDefault();
-    event.stopPropagation();
-    void openVersionMenu().then(() => versionMenu.querySelector('[aria-selected="true"]')?.focus());
-  });
+  frame.addEventListener("load", () => connectPanelFrame(panelState, panelId), { once: true });
 
   versionMenu.addEventListener("keydown", (event) => {
-    const options = [...versionMenu.querySelectorAll("button")];
-    const index = options.indexOf(shadow.activeElement);
+    const optionEls = [...versionMenu.querySelectorAll("button")];
+    const index = optionEls.indexOf(shadow.activeElement);
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      closeVersionMenu();
-      versionBtn.focus();
+      closeVersionMenu(panelState);
+      frame.focus();
+      sendToPanel(panelState, { type: "focus-version" });
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       event.stopPropagation();
       const step = event.key === "ArrowDown" ? 1 : -1;
-      options[(index + step + options.length) % options.length]?.focus();
+      optionEls[(index + step + optionEls.length) % optionEls.length]?.focus();
     }
   });
 
-  root.addEventListener("click", (event) => {
-    if (!event.composedPath().includes(versionBtn)) closeVersionMenu();
-  });
+  host.addEventListener("mousedown", (event) => event.stopPropagation(), true);
+  host.addEventListener("pointerdown", (event) => event.stopPropagation(), true);
+  return panelState;
+}
 
-  phraseEl.addEventListener("input", () => {
-    clearCopyCheck(panelState);
-    unlockPhraseInput(phraseEl);
-    markStale();
-    if (!phraseEl.value.trim()) {
-      outEl.textContent = "";
-      outEl.classList.add("is-pending");
-      errEl.hidden = true;
-      lastApplied = "";
-      window.clearTimeout(panelState.deriveTimer);
-      panelState.deriveTimer = 0;
-      setResultExpanded(panelState, false);
-      return;
-    }
-    scheduleDerive();
-  });
+let warmPanel = null;
 
-  phraseEl.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closePanel();
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      void applyAndCloseFromEnter();
-    }
-  });
+function discardWarmPanel() {
+  const shell = warmPanel;
+  warmPanel = null;
+  if (shell && !shell.opened) {
+    shell.destroyed = true;
+    shell.resolveFrameReady?.();
+    removePanelHost(shell);
+  }
+}
 
-  root.querySelector(".hiz-pwd-form")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  });
+/** Starts loading the panel frame for a field the user is about to open. */
+function prewarmPanel(overlayDoc, mountRoot, getRect) {
+  const parent = mountRoot ?? overlayDoc.documentElement;
+  if (openPanel && !openPanel.closing) return;
+  if (warmPanel && !warmPanel.destroyed && warmPanel.parent === parent && warmPanel.host.isConnected) return;
+  discardWarmPanel();
+  try {
+    warmPanel = createPanelShell(overlayDoc, mountRoot, clampInputWidth(getRect().width));
+  } catch {
+    warmPanel = null;
+  }
+}
 
-  outEl.addEventListener("click", async () => {
-    const text = displayedPasswordValue(outEl);
-    if (!text) return;
-    selectPasswordText(outEl);
-    if (await copyText(text, { doc: outEl.ownerDocument })) {
-      showCopyCheck(panelState);
-    }
-  });
+function prewarmPanelFor(input) {
+  if (!input?.isConnected) return;
+  const { overlayDoc, mountRoot, getRect } = resolveOverlayTarget(input);
+  prewarmPanel(overlayDoc, mountRoot, getRect);
+}
 
-  // Clicking outside the panel fills the field too; Escape closes without filling.
-  panelState.applyOnDismiss = async () => {
-    if (!phraseEl.value.trim()) return;
-    const password = await currentPassword();
-    if (password) await flushApplyPassword(panelState, password);
-  };
+function takeWarmPanel(overlayDoc, mountRoot) {
+  const parent = mountRoot ?? overlayDoc.documentElement;
+  const shell = warmPanel;
+  warmPanel = null;
+  if (shell && !shell.destroyed && shell.parent === parent && shell.host.isConnected) return shell;
+  if (shell) {
+    warmPanel = shell;
+    discardWarmPanel();
+  }
+  return null;
+}
+
+function openForField(input, options = {}) {
+  closePanel({ animated: false });
+  const remote = options.remote ?? null;
+  const overlayTarget = input ? resolveOverlayTarget(input) : null;
+  const overlayDoc = options.overlayDoc ?? overlayTarget?.overlayDoc ?? document;
+  const getRect = options.getRect ?? overlayTarget?.getRect ?? (() => new DOMRect(0, 0, 0, 0));
+  const mountRoot = options.mountRoot ?? overlayTarget?.mountRoot ?? null;
+  const overlayWin = overlayDoc.defaultView ?? window;
+
+  const anchor = remote
+    ? topRemoteFields.get(remote.fieldId)?.anchor
+    : anchors.get(input);
+  setAnchorVisible(anchor, false);
+
+  const panelState = takeWarmPanel(overlayDoc, mountRoot)
+    ?? createPanelShell(overlayDoc, mountRoot, clampInputWidth(getRect().width));
+  const { host, root, sheet, site } = panelState;
+  console.log("[hiz-pwd] site for password", {
+    hostname: location.hostname,
+    host: site.host,
+    siteKey: site.siteKey,
+    siteName: site.siteName,
+  });
+  Object.assign(panelState, { opened: true, input, remote, anchor, getRect, lastApplied: "" });
 
   panelState.reposition = () => {
     if (panelState.enterAnimating || panelState.heightAnimating) return;
     root.style.transition = "none";
-    layoutPanel(host, root, phraseEl, getRect, overlayWin);
-    positionVersionMenu();
+    layoutPanel(host, root, panelState.phraseEl, getRect, overlayWin);
+    syncFrameWidth(panelState);
+    positionVersionMenu(panelState);
   };
-  host.addEventListener("mousedown", (event) => event.stopPropagation(), true);
-  host.addEventListener("pointerdown", (event) => event.stopPropagation(), true);
 
-  void refreshVersion();
   openPanel = panelState;
   panelState.enterAnimating = true;
   panelState.closing = false;
   bindPanelDismiss(panelState);
-  finalizePanelLayout(host, root, phraseEl, getRect, overlayWin, anchor, panelState, sheet, () => {
-    unlockPhraseInput(phraseEl);
-    phraseEl.focus({ preventScroll: true });
+  finalizePanelLayout(host, root, panelState.phraseEl, getRect, overlayWin, anchor, panelState, sheet, () => {
+    panelState.frame.focus();
+    sendToPanel(panelState, { type: "focus" });
   });
+}
+
+function connectPanelFrame(panelState, panelId) {
+  if (panelState.destroyed) return;
+  let port;
+  try {
+    port = chrome.runtime.connect({ name: `${PANEL_PORT_PREFIX}${panelId}` });
+  } catch {
+    return;
+  }
+  panelState.port = port;
+  port.onMessage.addListener((message) => onPanelFrameMessage(panelState, message));
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError;
+    if (panelState.port === port) panelState.port = null;
+  });
+  port.postMessage({
+    type: "init",
+    siteName: panelState.site.siteName,
+    siteKey: panelState.site.siteKey,
+    rootFontSize: getComputedStyle(panelState.overlayDoc.documentElement).fontSize,
+    quirks: panelState.overlayDoc.compatMode === "BackCompat",
+  });
+}
+
+/**
+ * A frame's inner width snaps to whole pixels, but the panel's width can be
+ * fractional (it follows the page field's width). At rest, tell the frame the
+ * exact width so the form lines up with the box as it did in the page. During
+ * the open morph the frame just follows the box, as the old form did.
+ */
+function syncFrameWidth(panelState) {
+  const width = panelState.enterAnimating
+    ? null
+    : panelState.frame.getBoundingClientRect().width;
+  if (width === panelState.sentFrameWidth) return;
+  panelState.sentFrameWidth = width;
+  sendToPanel(panelState, { type: "frame-width", width });
+}
+
+function sendToPanel(panelState, message) {
+  try {
+    panelState.port?.postMessage(message);
+  } catch {
+    /* frame gone */
+  }
+}
+
+function onPanelFrameMessage(panelState, message) {
+  switch (message?.type) {
+    case "metrics":
+      applyFrameMetrics(panelState, message);
+      break;
+    case "apply":
+      void applyFromPanel(panelState, message);
+      break;
+    case "close":
+      if (openPanel === panelState) closePanel();
+      break;
+    case "dismiss-result":
+      panelState.resolveDismiss?.(message);
+      break;
+    case "version-menu":
+      if (message.action === "open-focus") {
+        openVersionMenu(panelState, message.current, message.siteKey);
+        panelState.versionMenu.querySelector('[aria-selected="true"]')?.focus();
+      } else if (panelState.versionMenu.hidden) {
+        openVersionMenu(panelState, message.current, message.siteKey);
+      } else {
+        closeVersionMenu(panelState);
+      }
+      break;
+    case "menu-close":
+    case "frame-click":
+      closeVersionMenu(panelState);
+      break;
+    default:
+      break;
+  }
+}
+
+/** Fills the page's password field (and copies). Only on Enter or a click outside. */
+async function flushApplyPassword(panelState, password, siteKey) {
+  if (!password || password === panelState.lastApplied) return;
+  panelState.lastApplied = password;
+  const { input, remote } = panelState;
+  const key = siteKey || panelState.site.siteKey;
+  if (remote?.childWin) {
+    remote.childWin.postMessage(
+      { source: MSG, type: "fill", fieldId: remote.fieldId, value: password, siteKey: key },
+      "*",
+    );
+  } else if (input) {
+    fillInput(input, password);
+    await rememberUsernameForSite(input, key);
+  }
+  if (await copyText(password, { doc: panelState.overlayDoc })) {
+    sendToPanel(panelState, { type: "copied" });
+  }
+}
+
+async function applyFromPanel(panelState, { password, siteKey, submit }) {
+  if (openPanel !== panelState || panelState.closing) return;
+  await flushApplyPassword(panelState, password, siteKey);
+  closePanel();
+  if (!submit) return;
+  const { input, remote } = panelState;
+  if (remote?.childWin) {
+    remote.childWin.postMessage({ source: MSG, type: "submit-enter", fieldId: remote.fieldId }, "*");
+  } else {
+    submitPasswordField(input);
+  }
+}
+
+/** Clicking outside the panel fills the field too; Escape closes without filling. */
+function requestDismissApply(panelState) {
+  if (!panelState?.port || panelState.pendingDismiss) return;
+  panelState.pendingDismiss = new Promise((resolve) => {
+    const timer = window.setTimeout(() => resolve(null), PANEL_FRAME_TIMEOUT_MS);
+    panelState.resolveDismiss = (message) => {
+      window.clearTimeout(timer);
+      resolve(message);
+    };
+  })
+    .then(async (message) => {
+      if (message?.password) await flushApplyPassword(panelState, message.password, message.siteKey);
+    })
+    .finally(() => {
+      panelState.pendingDismiss = null;
+      panelState.resolveDismiss = null;
+      if (panelState.destroyed) removePanelHost(panelState);
+    });
+  sendToPanel(panelState, { type: "request-dismiss" });
+}
+
+function positionVersionMenu(panelState) {
+  const { versionMenu, host, overlayWin } = panelState;
+  if (!versionMenu || versionMenu.hidden) return;
+  const btn = panelState.versionAnchor.getBoundingClientRect();
+  const hostBox = host.getBoundingClientRect();
+  const height = versionMenu.offsetHeight;
+  const { vh } = overlayViewportSize(overlayWin);
+  const fitsBelow = btn.bottom + 6 + height <= vh - 4;
+  versionMenu.style.left = `${btn.right - hostBox.left}px`;
+  versionMenu.style.top = fitsBelow
+    ? `${btn.bottom - hostBox.top + 6}px`
+    : `${btn.top - hostBox.top - 6 - height}px`;
+}
+
+function closeVersionMenu(panelState) {
+  const { versionMenu } = panelState;
+  if (!versionMenu || versionMenu.hidden) return;
+  versionMenu.hidden = true;
+  sendToPanel(panelState, { type: "menu-state", open: false });
+}
+
+function openVersionMenu(panelState, current, siteKey) {
+  const { versionMenu, overlayDoc } = panelState;
+  if (!siteKey || !Number.isInteger(current)) return;
+  versionMenu.replaceChildren();
+  for (let version = 1; version <= current + 1; version += 1) {
+    const item = overlayDoc.createElement("li");
+    item.setAttribute("role", "presentation");
+    const option = overlayDoc.createElement("button");
+    option.type = "button";
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", version === current ? "true" : "false");
+    const label = overlayDoc.createElement("span");
+    label.textContent = `v${version}`;
+    option.append(label);
+    const noteText = version === current ? "current" : version === current + 1 ? "new" : "";
+    if (noteText) {
+      const note = overlayDoc.createElement("span");
+      note.className = "hiz-pwd-version-note";
+      note.textContent = noteText;
+      option.append(note);
+    }
+    option.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeVersionMenu(panelState);
+      sendToPanel(panelState, { type: "set-version", siteKey, version });
+    });
+    item.append(option);
+    versionMenu.append(item);
+  }
+  versionMenu.hidden = false;
+  sendToPanel(panelState, { type: "menu-state", open: true });
+  positionVersionMenu(panelState);
 }
 
 function detachFromField(input) {
@@ -1617,6 +1520,12 @@ function attachToField(input) {
     event.stopPropagation();
     openForField(input);
   });
+  anchor.addEventListener("pointerenter", () => prewarmPanelFor(input));
+  anchor.addEventListener("focus", () => prewarmPanelFor(input));
+  if (!prewarmListeners.has(input)) {
+    prewarmListeners.add(input);
+    input.addEventListener("focus", () => prewarmPanelFor(input));
+  }
 
   const site = resolveSiteFromHostname(location.hostname);
   void autofillUsernameOnce(input, site.siteKey);
@@ -1635,8 +1544,8 @@ function onPanelDismiss(event) {
   event.preventDefault();
   event.stopPropagation();
   const panel = openPanel;
+  requestDismissApply(panel);
   closePanel();
-  void panel.applyOnDismiss?.();
 }
 if (isTopWindow()) installTopBridge();
 scan();

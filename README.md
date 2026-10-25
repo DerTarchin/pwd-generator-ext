@@ -33,4 +33,6 @@ npm test
 
 On any http(s) page with a password field, click the floating hiz icon and enter your master passphrase (masked like the web app). The site password is generated in the panel as you type, but the page's password field is only filled (and the password copied) when you press Enter, which also submits, or click outside the panel. Escape closes without filling. Click the password in the panel to copy it.
 
+The panel's form (passphrase, site, and generated password) runs in an extension-owned frame (`src/panel/`), so the page it sits on cannot read the passphrase or see the keystrokes. The page only ever receives the password that is filled into its field.
+
 The `v1` next to the site name is the site's password version. Pick a higher one from its menu to rotate that site's password; the choice is remembered per site in this browser (separately from hiz.al/pwd). Open DevTools → Console to see `[hiz-pwd] site for password` with the resolved `siteKey`.

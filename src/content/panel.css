@@ -1,11 +1,8 @@
-@font-face {
-  font-family: "Kode Mono";
-  src: url("fonts/kode-mono.woff2") format("woff2");
-  font-weight: 400 600;
-  font-style: normal;
-  font-display: swap;
-}
-
+/*
+ * The panel's outer box and the version menu, in the page's shadow root. The
+ * form itself (passphrase, site, result) is in panel.html / panel-frame.css,
+ * inside an extension-origin frame that fills this box.
+ */
 .hiz-pwd-panel {
   --content-pad: 16px;
   --input-w: 280px;
@@ -22,7 +19,11 @@
   transform-origin: center center;
   width: calc(var(--input-w) + 2 * var(--content-pad));
   max-width: calc(100vw - 8px);
-  padding: var(--content-pad);
+  padding: 0;
+  /* The padding moved into the frame; keep the smallest size it used to force
+     (2 x 16px padding + 2 x 1px border), which shapes the start of the morph. */
+  min-width: calc(2 * var(--content-pad) + 2px);
+  min-height: calc(2 * var(--content-pad) + 2px);
   border-radius: 18px;
   border: 1px solid rgba(142, 176, 255, 0.2);
   background: #121018;
@@ -32,97 +33,17 @@
   pointer-events: auto;
 }
 
-.hiz-pwd-panel label {
+/* Follows the box's width, so the form reflows during the open morph exactly
+   as it did when it lived in the page. */
+.hiz-pwd-frame {
   display: block;
-  margin: 0 0 0.35rem 0;
-  padding-left: var(--content-pad);
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #a8b6de;
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.hiz-pwd-panel input[type="text"] {
-  display: block;
-  width: var(--input-w);
-  max-width: 100%;
-  box-sizing: border-box;
+  width: 100%;
   margin: 0;
-  padding: 0.75rem var(--content-pad);
-  border: 1px solid rgba(142, 176, 255, 0.2);
-  border-radius: 12px;
-  background: rgba(142, 176, 255, 0.065);
-  color: inherit;
-  font: inherit;
-  font-size: 16px;
-  outline: none;
-}
-
-.hiz-pwd-panel input[type="text"]:focus {
-  border-color: rgba(122, 156, 232, 0.48);
-  box-shadow: 0 0 0 1px rgba(90, 111, 184, 0.35);
-}
-
-.hiz-pwd-phrase {
-  -webkit-text-security: disc;
-  text-security: disc;
-}
-
-.hiz-pwd-site-row {
-  display: flex;
-  align-items: baseline;
-  gap: 0.5rem;
-  margin: 0.35rem 0 0;
-}
-
-.hiz-pwd-site {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 0 0 0 var(--content-pad);
-  color: rgba(142, 176, 255, 0.55);
-  font-size: 0.9rem;
-  line-height: 1.4;
-  word-break: break-word;
-  outline: none;
+  padding: 0;
   border: 0;
   background: transparent;
-  box-shadow: none;
-  -webkit-user-select: text;
-  user-select: text;
-  cursor: text;
-}
-
-.hiz-pwd-site:focus {
-  outline: none;
-  color: #f3f1eb;
-}
-
-.hiz-pwd-version {
-  flex: none;
-  margin: 0;
-  padding: 0 var(--content-pad) 0 0.4rem;
-  border: 0;
-  background: transparent;
-  color: rgba(142, 176, 255, 0.55);
-  font: inherit;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  cursor: pointer;
-}
-
-.hiz-pwd-version:disabled {
-  cursor: default;
-}
-
-.hiz-pwd-version:not(:disabled):hover,
-.hiz-pwd-version:focus-visible,
-.hiz-pwd-version[aria-expanded="true"] {
-  color: #f3f1eb;
-  outline: none;
+  /* Must match panel-frame.css, or Chrome paints the frame opaque. */
+  color-scheme: normal;
 }
 
 .hiz-pwd-version-menu {
@@ -178,76 +99,6 @@
   color: rgba(142, 176, 255, 0.46);
   font-size: 0.72rem;
   letter-spacing: 0.04em;
-}
-
-.hiz-pwd-result {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin: 0.65rem 0 0;
-  min-height: 1.5rem;
-}
-
-.hiz-pwd-result.is-collapsed {
-  display: none;
-}
-
-.hiz-pwd-password {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 0.2rem var(--content-pad);
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  letter-spacing: 0.03em;
-  line-height: 1.35;
-  word-break: break-all;
-  color: #f3f1eb;
-  cursor: pointer;
-  user-select: all;
-  border-radius: 8px;
-}
-
-.hiz-pwd-password::selection {
-  background: rgba(90, 111, 184, 0.45);
-  color: #f3f1eb;
-}
-
-.hiz-pwd-password.is-pending {
-  color: #a8b6de;
-  font-family: inherit;
-  font-size: 0.85rem;
-  letter-spacing: 0;
-  cursor: default;
-  user-select: none;
-}
-
-.hiz-pwd-check {
-  position: absolute;
-  top: 50%;
-  right: var(--content-pad);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
-
-.hiz-pwd-check[hidden] {
-  display: none !important;
-}
-
-.hiz-pwd-check svg {
-  width: 1.2rem;
-  height: 1.2rem;
-  display: block;
-}
-
-.hiz-pwd-error {
-  margin: 0.5rem 0 0;
-  padding-left: var(--content-pad);
-  font-size: 0.8rem;
-  color: #e7b2a2;
 }
 
 @media (prefers-reduced-motion: reduce) {

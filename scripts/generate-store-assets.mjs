@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import sharp from "sharp";
 import { chromium } from "playwright";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
+import { fillPassphrase, waitForPanelPassword } from "./panel-frame-helpers.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = join(root, "store-listing");
@@ -206,19 +207,7 @@ const FIXTURE_HTML = `<!DOCTYPE html>
 </html>`;
 
 async function waitForPasswordDerived(page) {
-  await page.waitForFunction(
-    () => {
-      const host = document.querySelector(".hiz-pwd-panel-host");
-      const el = host?.shadowRoot?.querySelector("#hiz-pwd-out");
-      return (
-        el &&
-        el.textContent &&
-        el.textContent.length >= 8 &&
-        !el.classList.contains("is-pending")
-      );
-    },
-    { timeout: 120000 },
-  );
+  await waitForPanelPassword(page);
 }
 
 async function captureScreenshots() {
@@ -265,7 +254,7 @@ async function captureScreenshots() {
   await new Promise((resolve) => setTimeout(resolve, 350));
   await shot("screenshot-02-panel-open.jpg");
 
-  await page.fill("#hiz-pwd-phrase", "demo passphrase for store");
+  await fillPassphrase(page, "demo passphrase for store");
   await shot("screenshot-03-passphrase-entered.jpg");
 
   await waitForPasswordDerived(page);

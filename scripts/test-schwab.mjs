@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
+import { fillPassphrase, waitForPanelPassword } from "./panel-frame-helpers.mjs";
 import { generatePassword } from "../src/lib/crypto.js";
 import { resolveSiteFromHostname } from "../src/lib/site-resolve.js";
 
@@ -64,15 +65,8 @@ const expectedPassword = await generatePassword("test-passphrase", site.siteKey)
 
 await page.click(".hiz-pwd-anchor");
 await page.waitForSelector(".hiz-pwd-panel-host", { timeout: 15000 });
-await page.fill("#hiz-pwd-phrase", "test-passphrase");
-await page.waitForFunction(
-  () => {
-    const host = document.querySelector(".hiz-pwd-panel-host");
-    const el = host?.shadowRoot?.querySelector("#hiz-pwd-out");
-    return el?.textContent?.length === 17 && !el.classList.contains("is-pending");
-  },
-  { timeout: 120000 },
-);
+await fillPassphrase(page, "test-passphrase");
+await waitForPanelPassword(page);
 
 // The field fills on Enter or a click outside the panel, never while typing.
 await page.mouse.click(5, 5);

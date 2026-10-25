@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Password Generator</title>
+    <link rel="stylesheet" href="panel-frame.css" />
+  </head>
+  <body>
+    <!-- Not a <form>: nothing here ever submits, so password managers stay quiet. -->
+    <div class="hiz-pwd-form" data-lpignore="true" data-1p-ignore data-bwignore>
+      <label for="hiz-pwd-phrase">Passphrase</label>
+      <input
+        id="hiz-pwd-phrase"
+        class="hiz-pwd-phrase"
+        type="password"
+        name="hiz_pwd_phrase"
+        autocomplete="new-password"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        aria-autocomplete="none"
+        data-form-type="other"
+        data-1p-ignore
+        data-lpignore="true"
+        data-bwignore
+        readonly
+      />
+      <div class="hiz-pwd-site-row">
+        <div
+          class="hiz-pwd-site"
+          id="hiz-pwd-site"
+          contenteditable="true"
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+          role="textbox"
+          aria-label="Site"
+        ></div>
+        <button
+          class="hiz-pwd-version"
+          id="hiz-pwd-version"
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-label="Password version 1"
+        >v1</button>
+      </div>
+      <div class="hiz-pwd-result is-collapsed" id="hiz-pwd-result">
+        <p class="hiz-pwd-password is-pending" id="hiz-pwd-out" aria-live="polite"></p>
+        <span class="hiz-pwd-check" id="hiz-pwd-check" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <defs>
+              <linearGradient id="hiz-pwd-copy-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#8eb0ff"></stop>
+                <stop offset="50%" stop-color="#d08cff"></stop>
+                <stop offset="100%" stop-color="#8eb0ff"></stop>
+                <animateTransform
+                  attributeName="gradientTransform"
+                  type="translate"
+                  dur="2.2s"
+                  repeatCount="indefinite"
+                  calcMode="spline"
+                  keyTimes="0;0.5;1"
+                  keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
+                  values="-10 -10;10 10;-10 -10"
+                ></animateTransform>
+              </linearGradient>
+            </defs>
+            <path d="M5 12.5 9.5 17 19 7.5" fill="none" stroke="url(#hiz-pwd-copy-grad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+        </span>
+      </div>
+      <p class="hiz-pwd-error" id="hiz-pwd-err" hidden></p>
+    </div>
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

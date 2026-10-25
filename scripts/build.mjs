@@ -73,6 +73,19 @@ await esbuild.build({
 });
 copyFileSync(join(root, "src/offscreen/offscreen.html"), join(dist, "offscreen.html"));
 
+await esbuild.build({
+  entryPoints: [join(root, "src/panel/panel.js")],
+  bundle: true,
+  outfile: join(dist, "panel.js"),
+  format: "esm",
+  platform: "browser",
+  target: "chrome120",
+  minify: false,
+  sourcemap: true,
+});
+copyFileSync(join(root, "src/panel/panel.html"), join(dist, "panel.html"));
+copyFileSync(join(root, "src/panel/panel-frame.css"), join(dist, "panel-frame.css"));
+
 copyFileSync(join(root, "src/content/content.css"), join(dist, "content.css"));
 copyFileSync(join(root, "src/content/panel.css"), join(dist, "panel.css"));
 copyFileSync(join(root, "manifest.json"), join(dist, "manifest.json"));

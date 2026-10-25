@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
+import { fillPassphrase, panelFrame, waitForPanelPassword } from "./panel-frame-helpers.mjs";
 import { generatePassword } from "../src/lib/crypto.js";
 import { resolveSiteFromHostname } from "../src/lib/site-resolve.js";
 
@@ -37,16 +38,9 @@ const expectedPassword = await generatePassword("test-passphrase", site.siteKey)
 
 await page.waitForSelector(".hiz-pwd-anchor", { timeout: 30000 });
 await page.click(".hiz-pwd-anchor");
-await page.fill("#hiz-pwd-phrase", "test-passphrase");
+await fillPassphrase(page, "test-passphrase");
 
-await page.waitForFunction(
-  () => {
-    const host = document.querySelector(".hiz-pwd-panel-host");
-    const el = host?.shadowRoot?.querySelector("#hiz-pwd-out");
-    return el?.textContent?.length === 17 && !el.classList.contains("is-pending");
-  },
-  { timeout: 120000 },
-);
+await waitForPanelPassword(page);
 
 await page.waitForTimeout(APPLY_IDLE_MS + 300);
 const clipboardAfterDerive = await page.evaluate(async () => {
@@ -57,11 +51,7 @@ const clipboardAfterDerive = await page.evaluate(async () => {
   }
 });
 
-await page.evaluate(() => {
-  const host = document.querySelector(".hiz-pwd-panel-host");
-  const out = host?.shadowRoot?.querySelector("#hiz-pwd-out");
-  out?.click();
-});
+await panelFrame(page).locator("#hiz-pwd-out").click();
 
 await page.waitForTimeout(500);
 const clipboardAfterClick = await page.evaluate(async () => {
