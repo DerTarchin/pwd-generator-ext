@@ -203,6 +203,7 @@ function ensureTopRemoteAnchor(fieldId, childWin, iframe) {
   });
 
   anchor.addEventListener("click", (event) => {
+    if (!event.isTrusted) return;
     event.preventDefault();
     event.stopPropagation();
     openForField(null, {
@@ -1515,6 +1516,8 @@ function attachToField(input) {
   placeNearField(anchor, getRect, overlayDoc.defaultView ?? window);
 
   anchor.addEventListener("click", (event) => {
+    // Only a real click opens the panel; a page script's anchor.click() is ignored.
+    if (!event.isTrusted) return;
     event.preventDefault();
     event.stopPropagation();
     openForField(input);
@@ -1535,6 +1538,9 @@ function scan() {
 }
 
 function onPanelDismiss(event) {
+  // Dismissing fills the field, so only a real pointer may do it. Page scripts
+  // can dispatch mousedown events of their own; those are never trusted.
+  if (!event.isTrusted) return;
   if (!openPanel || openPanel.closing) return;
   const path = event.composedPath();
   if (path.includes(openPanel.host)) return;

@@ -81,7 +81,7 @@ for (const site of SITES) {
     await page.waitForTimeout(site.waitMs);
     await waitForPasswordContext(page);
     await page.waitForSelector(".hiz-pwd-anchor", { timeout: 90000 });
-    await page.evaluate(() => document.querySelector(".hiz-pwd-anchor")?.click());
+    await page.locator(".hiz-pwd-anchor").first().click({ timeout: 15000 });
     await page.waitForFunction(
       () => document.querySelector(".hiz-pwd-panel-host")?.shadowRoot?.querySelector(".hiz-pwd-panel"),
       { timeout: 15000 },

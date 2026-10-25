@@ -45,7 +45,7 @@ await page.evaluate(() => {
   );
 });
 
-await page.evaluate(() => document.querySelector(".hiz-pwd-anchor")?.click());
+await page.locator(".hiz-pwd-anchor").first().click({ timeout: 15000 });
 await page.waitForSelector(".hiz-pwd-panel-host", { timeout: 15000 });
 await fillPassphrase(page, "test-passphrase");
 await page.keyboard.press("Enter");

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { ensureChrome133 } from "./ensure-test-chrome.mjs";
 import {
   fillPassphrase,
+  isPanelOpenInPage,
   panelFrame,
   waitForPanelClosed,
   waitForPanelOpen,
@@ -166,6 +167,29 @@ await waitForPanelClosed(page);
 await page.waitForTimeout(500);
 if (await page.inputValue("#pw") !== "") throw new Error("Escape should close without filling");
 console.log("extension escape ok");
+
+// Page scripts cannot open the panel or force a fill with synthetic events.
+await page.waitForFunction(() => {
+  const anchor = document.querySelector(".hiz-pwd-anchor");
+  return Boolean(anchor) && !anchor.hidden && !anchor.classList.contains("is-hidden");
+}, null, { timeout: 5000 });
+await page.evaluate(() => document.querySelector(".hiz-pwd-anchor")?.click());
+await page.waitForTimeout(800);
+if (await page.evaluate(isPanelOpenInPage)) throw new Error("a synthetic click on the icon opened the panel");
+await page.click(".hiz-pwd-anchor");
+await fillPassphrase(page, "test-passphrase");
+await waitForPanelPassword(page, { expected: expectedPassword });
+await page.evaluate(() => {
+  const init = { bubbles: true, cancelable: true, composed: true };
+  document.dispatchEvent(new MouseEvent("mousedown", init));
+  document.body.dispatchEvent(new MouseEvent("mousedown", init));
+});
+await page.waitForTimeout(800);
+if (!(await page.evaluate(isPanelOpenInPage))) throw new Error("a synthetic mousedown closed the panel");
+if (await page.inputValue("#pw") !== "") throw new Error("a synthetic mousedown filled the password field");
+await panelFrame(page).locator("#hiz-pwd-phrase").press("Escape");
+await waitForPanelClosed(page);
+console.log("extension synthetic events ok: page scripts cannot open the panel or force a fill");
 
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
