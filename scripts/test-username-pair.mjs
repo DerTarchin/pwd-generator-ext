@@ -20,9 +20,17 @@ const FIXTURE_HTML = `<!DOCTYPE html>
 </form>
 </body></html>`;
 
+const PASSWORD_ONLY_HTML = `<!DOCTYPE html>
+<html><head><title>password only</title></head><body>
+<form id="login">
+<label>Password <input id="pw" type="password" name="password" autocomplete="current-password" /></label>
+</form>
+</body></html>`;
+
 const server = createServer((req, res) => {
+  const path = new URL(req.url || "/", "http://127.0.0.1").pathname;
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(FIXTURE_HTML);
+  res.end(path === "/password-only" ? PASSWORD_ONLY_HTML : FIXTURE_HTML);
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -64,8 +72,26 @@ const emailAfterReload = await page.inputValue("#email");
 if (emailAfterReload !== testEmail) {
   throw new Error(`username autofill failed: got ${emailAfterReload}`);
 }
+await waitForOpenPanel(page);
+
+await page.goto(`http://127.0.0.1:${port}/password-only`, { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
+await waitForOpenPanel(page);
 
 console.log("username remember/autofill ok", { siteKey: site.siteKey, email: testEmail });
+
+async function waitForOpenPanel(page) {
+  await page.waitForFunction(
+    () => {
+      const host = document.querySelector(".hiz-pwd-panel-host");
+      const panel = host?.shadowRoot?.querySelector(".hiz-pwd-panel");
+      if (!panel) return false;
+      const style = getComputedStyle(panel);
+      return style.visibility === "visible" && Number(style.opacity) > 0.5;
+    },
+    { timeout: 10000 },
+  );
+}
 
 await context.close();
 server.close();

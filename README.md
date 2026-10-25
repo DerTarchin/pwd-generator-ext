@@ -9,7 +9,17 @@ npm install
 npm run build
 ```
 
+`npm run build` copies the shared site catalog from `../sites/hiz.al/pwd` (`catalog.json` and `site-registry.js`) and embeds that snapshot for offline use. After install, the extension refreshes `https://hiz.al/pwd/catalog.json.gz` at most once an hour.
+
 Load `dist/` as an unpacked extension in Chrome.
+
+## Chrome Web Store assets
+
+```bash
+npm run store-assets
+```
+
+Writes listing images to `store-listing/` (icon, promo tiles, and 1280×800 screenshots). Requires Chrome for Testing (same as `npm test`).
 
 ## Test
 

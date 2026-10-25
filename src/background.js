@@ -1,5 +1,8 @@
+import { startCatalogSync } from "./lib/catalog-sync.js";
 import { COPY_MSG } from "./lib/copy.js";
 import { generatePassword } from "./lib/crypto.js";
+
+startCatalogSync();
 
 const GENERATE_MSG = "hiz-pwd-generate";
 const OFFSCREEN_COPY_MSG = "hiz-pwd-offscreen-copy";

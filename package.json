@@ -6,7 +6,9 @@
   "description": "Chrome extension for hiz.al deterministic passwords",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node scripts/build.mjs && node scripts/test-crypto.mjs && node scripts/test-extension.mjs && node scripts/test-username-pair.mjs",
+    "package": "node scripts/package.mjs",
+    "store-assets": "node scripts/build.mjs && node scripts/generate-store-assets.mjs",
+    "test": "node scripts/build.mjs && node scripts/test-catalog.mjs && node scripts/test-crypto.mjs && node scripts/test-extension.mjs && node scripts/test-username-pair.mjs",
     "test:animation": "node scripts/build.mjs && node scripts/test-panel-animation.mjs",
     "test:site-motion": "node scripts/build.mjs && node scripts/test-site-motion.mjs",
     "test:schwab": "node scripts/build.mjs && node scripts/test-schwab.mjs",
@@ -18,6 +20,7 @@
   "devDependencies": {
     "@fontsource/kode-mono": "^5.2.5",
     "esbuild": "^0.25.0",
-    "playwright": "^1.51.0"
+    "playwright": "^1.51.0",
+    "sharp": "^0.35.5"
   }
 }

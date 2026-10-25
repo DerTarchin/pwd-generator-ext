@@ -4,5 +4,8 @@ dist/
 chromium/
 .keys/
 *.crx
+pwd-generator-ext-*.zip
 .DS_Store
 scripts/fixture.html
+src/lib/site-registry.js
+src/lib/catalog-fallback.json

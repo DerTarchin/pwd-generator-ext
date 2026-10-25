@@ -479,12 +479,14 @@ function fillInput(input, value) {
 async function autofillUsernameOnce(passwordInput, siteKey) {
   if (!siteKey || usernameAutofillDone.has(passwordInput)) return;
   usernameAutofillDone.add(passwordInput);
-  const usernameEl = findPairedUsernameField(passwordInput, isPasswordField);
-  if (!usernameEl) return;
   const stored = await getStoredUsername(siteKey);
   if (!stored?.value) return;
-  if (usernameEl.value.trim()) return;
-  fillInput(usernameEl, stored.value);
+  try {
+    const usernameEl = findPairedUsernameField(passwordInput, isPasswordField);
+    if (usernameEl && !usernameEl.value.trim()) fillInput(usernameEl, stored.value);
+  } catch {
+    /* a saved username still opens the panel */
+  }
   requestOpenPanelAfterUsernameAutofill(passwordInput);
 }
 

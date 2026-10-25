@@ -1,10 +1,21 @@
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
+const catalogRoot = join(root, "../sites/hiz.al/pwd");
+const catalogJson = join(catalogRoot, "catalog.json");
+const registrySrc = join(catalogRoot, "site-registry.js");
+
+if (!existsSync(catalogJson) || !existsSync(registrySrc)) {
+  throw new Error(
+    "Missing shared site catalog. Expected ../sites/hiz.al/pwd/catalog.json and site-registry.js",
+  );
+}
+copyFileSync(catalogJson, join(root, "src/lib/catalog-fallback.json"));
+copyFileSync(registrySrc, join(root, "src/lib/site-registry.js"));
 
 mkdirSync(dist, { recursive: true });
 mkdirSync(join(dist, "icons"), { recursive: true });
