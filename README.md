@@ -9,7 +9,7 @@ npm install
 npm run build
 ```
 
-`npm run build` copies the shared site catalog from `../sites/hiz.al/pwd` (`catalog.json` and `site-registry.js`) and embeds that snapshot for offline use. After install, the extension refreshes `https://hiz.al/pwd/catalog.json.gz` at most once an hour.
+`npm run build` copies shared files from the site checkout at `../sites/hiz.al/pwd` so the extension always matches the web app: the site catalog (`catalog.json`, `site-registry.js`, embedded for offline use), the passphrase fingerprint (`passphrase-fingerprint.js`), and the self-hosted Kode Mono font. After install, the extension refreshes `https://hiz.al/pwd/catalog.json.gz` at most once an hour.
 
 Load `dist/` as an unpacked extension in Chrome.
 

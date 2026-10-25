@@ -13,7 +13,7 @@
 import { copyText } from "../lib/copy.js";
 import { generatePassword } from "../lib/crypto-client.js";
 import { PASSWORD_LENGTH } from "../lib/derive.js";
-import { startMatrixLoading, stopMatrixLoading } from "../lib/matrix-loading.js";
+import { mountPassphraseFingerprint } from "../lib/passphrase-fingerprint.js";
 import { getSiteVersion, setSiteVersion } from "../lib/site-versions.js";
 import { PANEL_PORT_PREFIX } from "../lib/panel-port.js";
 import { cleanHostInput, rowForInput } from "../lib/sites.js";
@@ -29,11 +29,14 @@ const resultEl = document.querySelector("#hiz-pwd-result");
 const outEl = document.querySelector("#hiz-pwd-out");
 const checkEl = document.querySelector("#hiz-pwd-check");
 const errEl = document.querySelector("#hiz-pwd-err");
+// Shared with hiz.al/pwd (copied from the site at build time).
+const fingerprint = mountPassphraseFingerprint(document.querySelector("#hiz-pwd-fingerprint"));
 
 let port = null;
 let deriveSerial = 0;
 let deriveTimer = 0;
-let matrixTimer = null;
+// A version picked before any site is entered applies to the next site (as on hiz.al/pwd).
+let pendingSiteVersion = null;
 let copyTimer = 0;
 // The password for the current phrase, site, and version; "" while stale.
 let readyPassword = "";
@@ -69,7 +72,7 @@ function onMessage(message) {
       phraseEl.focus({ preventScroll: true });
       break;
     case "set-version":
-      void chooseVersion(message.siteKey, message.version);
+      void chooseVersion(message.version);
       break;
     case "menu-state":
       versionBtn.setAttribute("aria-expanded", message.open ? "true" : "false");
@@ -92,10 +95,7 @@ function onMessage(message) {
   }
 }
 
-function init({ siteName, rootFontSize, quirks }) {
-  // rem-based sizes used to follow the host page's root font size; keep that.
-  if (rootFontSize) document.documentElement.style.fontSize = rootFontSize;
-  document.documentElement.classList.toggle("host-quirks", Boolean(quirks));
+function init({ siteName }) {
   siteEl.textContent = siteName ?? "";
   const observer = new ResizeObserver(() => reportMetrics());
   observer.observe(document.body);
@@ -145,7 +145,7 @@ function normalizeSiteElLabel() {
 }
 
 function displayedPasswordValue() {
-  if (outEl.classList.contains("is-matrix")) return "";
+  if (outEl.classList.contains("is-deriving")) return "";
   const text = outEl.textContent?.trim() ?? "";
   return text.length === PASSWORD_LENGTH ? text : "";
 }
@@ -177,27 +177,54 @@ function showCopyCheck() {
   }, COPY_FEEDBACK_MS);
 }
 
+function versionNoteText(version) {
+  if (version === 1) return "current";
+  if (version === 2) return "alternative";
+  return "";
+}
+
+async function displayedSiteVersion(siteKey) {
+  if (siteKey) return getSiteVersion(siteKey);
+  return pendingSiteVersion ?? 1;
+}
+
+async function commitPendingSiteVersion(siteKey) {
+  if (!siteKey || pendingSiteVersion === null) return;
+  const version = pendingSiteVersion;
+  pendingSiteVersion = null;
+  await setSiteVersion(siteKey, version);
+}
+
 async function refreshVersion() {
   const siteKey = siteKeyFromSiteEl();
-  const version = await getSiteVersion(siteKey);
+  const version = await displayedSiteVersion(siteKey);
   if (siteKeyFromSiteEl() !== siteKey) return versionValue;
   versionKey = siteKey;
   versionValue = version;
   versionBtn.textContent = `v${version}`;
-  versionBtn.disabled = !siteKey;
+  versionBtn.disabled = false;
   versionBtn.setAttribute("aria-label", `Password version ${version}`);
   return version;
 }
 
+/** Same options as hiz.al/pwd: at least v1 and v2, plus one past the current. */
 async function requestVersionMenu(action) {
   const current = await refreshVersion();
-  if (!versionKey) return;
-  send({ type: "version-menu", action, current, siteKey: versionKey });
+  const options = [];
+  for (let version = 1; version <= Math.max(2, current + 1); version += 1) {
+    options.push({ version, note: versionNoteText(version), selected: version === current });
+  }
+  send({ type: "version-menu", action, options });
 }
 
-async function chooseVersion(siteKey, version) {
-  if (siteKeyFromSiteEl() !== siteKey) return;
-  if (version !== versionValue) await setSiteVersion(siteKey, version);
+async function chooseVersion(version) {
+  const siteKey = siteKeyFromSiteEl();
+  if (siteKey) {
+    pendingSiteVersion = null;
+    if (version !== (await getSiteVersion(siteKey))) await setSiteVersion(siteKey, version);
+  } else {
+    pendingSiteVersion = version;
+  }
   await refreshVersion();
   clearCopyCheck();
   void runDerive();
@@ -207,26 +234,23 @@ function markStale() {
   readyPassword = "";
 }
 
+/** The "matrix" deriving state, pure CSS as on hiz.al/pwd. */
 function stopPasswordMatrix() {
-  stopMatrixLoading(matrixTimer);
-  matrixTimer = null;
-  outEl.classList.remove("is-matrix", "is-matrix-shimmer");
+  outEl.classList.remove("is-deriving");
 }
 
 function startPasswordMatrix() {
-  stopPasswordMatrix();
-  setResultExpanded(true);
-  outEl.classList.add("is-pending", "is-matrix", "is-matrix-shimmer");
+  outEl.textContent = "";
+  outEl.classList.add("is-pending", "is-deriving");
   errEl.hidden = true;
-  matrixTimer = startMatrixLoading((text) => {
-    outEl.textContent = text;
-  });
-  reportMetrics();
+  setResultExpanded(true);
 }
 
 function scheduleDerive() {
   window.clearTimeout(deriveTimer);
-  if (phraseEl.value.trim()) startPasswordMatrix();
+  // As on hiz.al/pwd: drop the old password at once and show the matrix while
+  // typing settles, but only when there is something to derive.
+  if (phraseEl.value.trim() && siteKeyFromSiteEl()) startPasswordMatrix();
   deriveTimer = window.setTimeout(() => {
     deriveTimer = 0;
     void runDerive();
@@ -253,16 +277,20 @@ async function runDerive() {
     return null;
   }
   const serial = ++deriveSerial;
-  if (!matrixTimer?.rafId) startPasswordMatrix();
   errEl.hidden = true;
   try {
     const siteKey = siteKeyFromSiteEl();
     if (!siteKey) {
+      stopPasswordMatrix();
+      outEl.textContent = "";
+      setResultExpanded(false);
       errEl.hidden = false;
       errEl.textContent = "Enter a site name.";
       reportMetrics();
       return null;
     }
+    if (!outEl.classList.contains("is-deriving")) startPasswordMatrix();
+    await commitPendingSiteVersion(siteKey);
     const version = await refreshVersion();
     const password = await generatePassword(phrase, siteKey, version);
     if (serial !== deriveSerial) return null;
@@ -354,6 +382,7 @@ document.addEventListener("click", (event) => {
 });
 
 phraseEl.addEventListener("input", () => {
+  fingerprint.update(phraseEl.value);
   clearCopyCheck();
   unlockPhraseInput();
   markStale();

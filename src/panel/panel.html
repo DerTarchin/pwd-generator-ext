@@ -9,22 +9,62 @@
     <!-- Not a <form>: nothing here ever submits, so password managers stay quiet. -->
     <div class="hiz-pwd-form" data-lpignore="true" data-1p-ignore data-bwignore>
       <label for="hiz-pwd-phrase">Passphrase</label>
-      <input
-        id="hiz-pwd-phrase"
-        class="hiz-pwd-phrase"
-        type="password"
-        name="hiz_pwd_phrase"
-        autocomplete="new-password"
-        autocapitalize="off"
-        autocorrect="off"
-        spellcheck="false"
-        aria-autocomplete="none"
-        data-form-type="other"
-        data-1p-ignore
-        data-lpignore="true"
-        data-bwignore
-        readonly
-      />
+      <div class="hiz-pwd-phrase-wrap">
+        <!--
+          A masked text field, not type="password": password fields make Chrome
+          and macOS offer strong-password and keychain UI before you can type.
+          The rest asks keyboards, autofill, writing tools, and extensions not
+          to suggest, correct, remember, or learn from it (same as hiz.al/pwd).
+        -->
+        <input
+          id="hiz-pwd-phrase"
+          class="hiz-pwd-phrase"
+          type="text"
+          inputmode="text"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          writingsuggestions="false"
+          aria-autocomplete="none"
+          translate="no"
+          data-form-type="other"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-gramm="false"
+          data-gramm_editor="false"
+          data-enable-grammarly="false"
+          readonly
+        />
+        <svg class="hiz-pwd-fingerprint" id="hiz-pwd-fingerprint" viewBox="0 0 50 50" aria-hidden="true">
+          <defs>
+            <linearGradient id="hiz-pwd-fingerprint-grad" x1="0" y1="0" x2="50" y2="50" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#8eb0ff"></stop>
+              <stop offset="50%" stop-color="#d08cff"></stop>
+              <stop offset="100%" stop-color="#8eb0ff"></stop>
+              <animateTransform
+                attributeName="gradientTransform"
+                type="translate"
+                dur="2.2s"
+                repeatCount="indefinite"
+                calcMode="spline"
+                keyTimes="0;0.5;1"
+                keySplines="0.45 0 0.55 1;0.45 0 0.55 1"
+                values="-10 -10;10 10;-10 -10"
+              ></animateTransform>
+            </linearGradient>
+          </defs>
+          <path
+            fill="none"
+            stroke="url(#hiz-pwd-fingerprint-grad)"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            vector-effect="non-scaling-stroke"
+          ></path>
+        </svg>
+      </div>
       <div class="hiz-pwd-site-row">
         <div
           class="hiz-pwd-site"

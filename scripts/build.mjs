@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -8,22 +8,26 @@ const dist = join(root, "dist");
 const catalogRoot = join(root, "../sites/hiz.al/pwd");
 const catalogJson = join(catalogRoot, "catalog.json");
 const registrySrc = join(catalogRoot, "site-registry.js");
+const fingerprintSrc = join(catalogRoot, "passphrase-fingerprint.js");
+const fontSrc = join(catalogRoot, "fonts/kode-mono-latin-wght-normal.woff2");
 
-if (!existsSync(catalogJson) || !existsSync(registrySrc)) {
-  throw new Error(
-    "Missing shared site catalog. Expected ../sites/hiz.al/pwd/catalog.json and site-registry.js",
-  );
+for (const shared of [catalogJson, registrySrc, fingerprintSrc, fontSrc]) {
+  if (!existsSync(shared)) {
+    throw new Error(`Missing shared file from the site checkout: ${shared}`);
+  }
 }
+// Shared with hiz.al/pwd so the extension always matches the web app.
 copyFileSync(catalogJson, join(root, "src/lib/catalog-fallback.json"));
 copyFileSync(registrySrc, join(root, "src/lib/site-registry.js"));
+copyFileSync(fingerprintSrc, join(root, "src/lib/passphrase-fingerprint.js"));
 
+// Start clean so a stale file never ships in an unpacked build.
+rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 mkdirSync(join(dist, "icons"), { recursive: true });
 mkdirSync(join(dist, "fonts"), { recursive: true });
-copyFileSync(
-  join(root, "node_modules/@fontsource/kode-mono/files/kode-mono-latin-400-normal.woff2"),
-  join(dist, "fonts/kode-mono.woff2"),
-);
+// The same self-hosted Kode Mono (variable, OFL) the web app serves.
+copyFileSync(fontSrc, join(dist, "fonts/kode-mono-latin-wght-normal.woff2"));
 
 await esbuild.build({
   entryPoints: [join(root, "src/content/main.js")],

@@ -9,3 +9,4 @@ pwd-generator-ext-*.zip
 scripts/fixture.html
 src/lib/site-registry.js
 src/lib/catalog-fallback.json
+src/lib/passphrase-fingerprint.js

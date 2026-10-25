@@ -83,7 +83,7 @@ if (Math.abs(layout.versionRight - layout.phraseRight) > 1) throw new Error(`v1 
 await panelFrame(page).locator("#hiz-pwd-version").click();
 await waitFor(() => [...document.querySelectorAll(".hiz-pwd-panel-host")].some((h) => h.shadowRoot?.querySelector("#hiz-pwd-version-menu")?.hidden === false), null, "menu open");
 const items = await menuItems();
-if (JSON.stringify(items) !== JSON.stringify(["v1current*", "v2new"])) throw new Error(`menu items: ${items}`);
+if (JSON.stringify(items) !== JSON.stringify(["v1current*", "v2alternative"])) throw new Error(`menu items: ${items}`);
 const visible = await page.evaluate(() => {
   const sr = [...document.querySelectorAll(".hiz-pwd-panel-host")]
     .map((h) => h.shadowRoot)
@@ -110,6 +110,8 @@ await outIs(AMAZON_V2);
 if (await label() !== "v2") throw new Error("v2 not remembered after reload");
 await panelFrame(page).locator("#hiz-pwd-version").click();
 await waitFor(() => [...document.querySelectorAll(".hiz-pwd-panel-host")].some((h) => h.shadowRoot?.querySelectorAll("#hiz-pwd-version-menu:not([hidden]) button").length === 3), null, "menu grows");
+const grown = await menuItems();
+if (JSON.stringify(grown) !== JSON.stringify(["v1current", "v2alternative*", "v3"])) throw new Error(`grown menu items: ${grown}`);
 await page.locator(shadow("#hiz-pwd-version-menu:not([hidden]) button")).nth(0).click();
 await outIs(AMAZON_V1);
 if (await label() !== "v1") throw new Error("could not go back to v1");

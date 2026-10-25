@@ -2,11 +2,18 @@
  * The panel's outer box and the version menu, in the page's shadow root. The
  * form itself (passphrase, site, result) is in panel.html / panel-frame.css,
  * inside an extension-origin frame that fills this box.
+ *
+ * Page stylesheets cannot select anything in here, but inherited properties
+ * (letter-spacing, line-height, text-transform, ...) would still flow in from
+ * the page, so every element starts from `all: initial` and sizes use px, not
+ * rem (which would follow the page's root font size). The script sets the
+ * box's position, size, and animation inline, which still wins over these.
  */
 .hiz-pwd-panel {
+  all: initial;
   --content-pad: 16px;
   --input-w: 280px;
-  --mono: "Kode Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  display: block;
   position: absolute;
   top: 0;
   left: 0;
@@ -20,7 +27,7 @@
   width: calc(var(--input-w) + 2 * var(--content-pad));
   max-width: calc(100vw - 8px);
   padding: 0;
-  /* The padding moved into the frame; keep the smallest size it used to force
+  /* The padding lives in the frame; keep the smallest size it used to force
      (2 x 16px padding + 2 x 1px border), which shapes the start of the morph. */
   min-width: calc(2 * var(--content-pad) + 2px);
   min-height: calc(2 * var(--content-pad) + 2px);
@@ -33,9 +40,9 @@
   pointer-events: auto;
 }
 
-/* Follows the box's width, so the form reflows during the open morph exactly
-   as it did when it lived in the page. */
+/* Follows the box's width, so the form reflows during the open morph. */
 .hiz-pwd-frame {
+  all: initial;
   display: block;
   width: 100%;
   margin: 0;
@@ -47,11 +54,13 @@
 }
 
 .hiz-pwd-version-menu {
+  all: initial;
+  display: block;
   position: absolute;
   z-index: 5;
-  min-width: 8.5rem;
+  min-width: 136px;
   margin: 0;
-  padding: 0.3rem 0;
+  padding: 5px 0;
   list-style: none;
   box-sizing: border-box;
   transform: translateX(-100%);
@@ -61,6 +70,7 @@
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   color: #f3f1eb;
   font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  text-align: left;
   pointer-events: auto;
 }
 
@@ -68,19 +78,26 @@
   display: none;
 }
 
+.hiz-pwd-version-menu li {
+  all: unset;
+  display: block;
+}
+
 .hiz-pwd-version-menu button {
+  all: unset;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 16px;
+  box-sizing: border-box;
   width: 100%;
   margin: 0;
-  padding: 0.45rem 0.9rem;
+  padding: 7px 14px;
   border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 0.88rem;
+  font-size: 14px;
   text-align: left;
   cursor: pointer;
 }
@@ -97,7 +114,7 @@
 
 .hiz-pwd-version-note {
   color: rgba(142, 176, 255, 0.46);
-  font-size: 0.72rem;
+  font-size: 11.5px;
   letter-spacing: 0.04em;
 }
 

@@ -1,18 +1,25 @@
 /*
  * The panel form, inside the extension-origin frame. The outer box (background,
  * border, radius, shadow, animation) stays in panel.css in the page's shadow
- * root. Values here match what that form used before it moved into the frame,
- * including two accidents kept on purpose so nothing looks different:
- * - No @font-face for Kode Mono: Chrome ignores @font-face inside a shadow
- *   root, so the old panel always fell back to the system monospace font.
- * - On quirks-mode pages the old <form> picked up a 1em bottom margin.
+ * root. Nothing on the host page can style anything in here, and the root
+ * font size is fixed, so the panel renders the same on every site. Fonts match
+ * hiz.al/pwd: the system UI stack, and Kode Mono for passwords (the same
+ * self-hosted file, copied from the site at build time).
  */
+@font-face {
+  font-family: "Kode Mono";
+  src: url("fonts/kode-mono-latin-wght-normal.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: block;
+}
 
 :root {
   --content-pad: 16px;
   --mono: "Kode Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   /* Must match the iframe element's scheme, or Chrome paints it opaque. */
   color-scheme: normal;
+  font-size: 16px;
 }
 
 html,
@@ -34,10 +41,6 @@ body {
   margin: 0;
 }
 
-.host-quirks .hiz-pwd-form {
-  margin-bottom: 1em;
-}
-
 label {
   display: block;
   margin: 0 0 0.35rem 0;
@@ -49,6 +52,10 @@ label {
   color: #a8b6de;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.hiz-pwd-phrase-wrap {
+  position: relative;
 }
 
 .hiz-pwd-phrase {
@@ -66,9 +73,29 @@ label {
   outline: none;
 }
 
+.hiz-pwd-phrase-wrap .hiz-pwd-phrase {
+  padding-right: 3.65rem;
+  /* Masks the text field without making it a password field. */
+  -webkit-text-security: disc;
+  text-security: disc;
+}
+
 .hiz-pwd-phrase:focus {
   border-color: rgba(122, 156, 232, 0.48);
   box-shadow: 0 0 0 1px rgba(90, 111, 184, 0.35);
+}
+
+/* Same shape as hiz.al/pwd: a quick visual check that the phrase is the one
+   you meant to type. Computed and drawn only inside this frame. */
+.hiz-pwd-fingerprint {
+  position: absolute;
+  top: 50%;
+  right: 0.55rem;
+  display: block;
+  width: 2.5rem;
+  height: 2.5rem;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .hiz-pwd-site-row {
@@ -168,34 +195,39 @@ label {
   user-select: none;
 }
 
-.hiz-pwd-password.is-pending.is-matrix {
-  color: #a8b6de;
-  font-family: var(--mono);
-  font-size: 0.8rem;
-  letter-spacing: 0.03em;
-}
-
-@keyframes hiz-pwd-matrix-shimmer {
-  0% {
-    background-position: 0% 50%;
-  }
-  100% {
-    background-position: 200% 50%;
-  }
-}
-
-.hiz-pwd-password.is-pending.is-matrix.is-matrix-shimmer {
+/* While the password derives: the same "matrix" text as hiz.al/pwd. */
+.hiz-pwd-password.is-deriving {
   color: transparent;
-  background: linear-gradient(
-    90deg,
-    #a8b6de 0%,
-    rgba(200, 212, 248, 0.92) 50%,
-    #a8b6de 100%
-  );
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: hiz-pwd-matrix-shimmer 0.4s linear infinite;
+}
+
+.hiz-pwd-password.is-deriving::after {
+  content: "4OgGaXhClhlF4rAmS";
+  color: #a8b6de;
+  animation: hiz-pwd-matrix-chars 1s linear infinite;
+}
+
+@keyframes hiz-pwd-matrix-chars {
+  0% { content: "4OgGaXhClhlF4rAmS"; }
+  5% { content: "vpslA7gfm0oPTCy6l"; }
+  10% { content: "rTiK0RW75cNHWhvEe"; }
+  15% { content: "ony3XE10U5FoacyxK"; }
+  20% { content: "mychTyTt4UuHscHOq"; }
+  25% { content: "b6LNL4QlTowLEXTxQ"; }
+  30% { content: "Bu7dP5bZDWj!UAxRo"; }
+  35% { content: "OFGzP0r4C5qTRVEMm"; }
+  40% { content: "0x5pTP5yFCF44ik9v"; }
+  45% { content: "QmuQiXFylmTtVqCOx"; }
+  50% { content: "3AuZlhJYA2fYuo11b"; }
+  55% { content: "vPDkAPj4SrAiBAvqH"; }
+  60% { content: "d1iJwSjO2yic9WRPf"; }
+  65% { content: "!z3X0xYTGjPfLEQ8l"; }
+  70% { content: "CedJ5rX4LtBoQRXHR"; }
+  75% { content: "UUH8BJRtwfJuy1jW4"; }
+  80% { content: "eaX8bAXpvyyYZ9yM4"; }
+  85% { content: "QCeBF!GrWZc7KDo4S"; }
+  90% { content: "dqEy2js7yTcJzAur5"; }
+  95% { content: "MXTHqhFxigYzM8kbf"; }
+  100% { content: "4OgGaXhClhlF4rAmS"; }
 }
 
 .hiz-pwd-check {

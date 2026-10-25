@@ -32,7 +32,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["icons/icon-48.png", "panel.css", "panel.html", "fonts/kode-mono.woff2"],
+      "resources": ["icons/icon-48.png", "panel.css", "panel.html"],
       "matches": ["http://*/*", "https://*/*"]
     }
   ]

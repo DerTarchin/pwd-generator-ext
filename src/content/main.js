@@ -1265,8 +1265,6 @@ function connectPanelFrame(panelState, panelId) {
     type: "init",
     siteName: panelState.site.siteName,
     siteKey: panelState.site.siteKey,
-    rootFontSize: getComputedStyle(panelState.overlayDoc.documentElement).fontSize,
-    quirks: panelState.overlayDoc.compatMode === "BackCompat",
   });
 }
 
@@ -1309,10 +1307,10 @@ function onPanelFrameMessage(panelState, message) {
       break;
     case "version-menu":
       if (message.action === "open-focus") {
-        openVersionMenu(panelState, message.current, message.siteKey);
+        openVersionMenu(panelState, message.options);
         panelState.versionMenu.querySelector('[aria-selected="true"]')?.focus();
       } else if (panelState.versionMenu.hidden) {
-        openVersionMenu(panelState, message.current, message.siteKey);
+        openVersionMenu(panelState, message.options);
       } else {
         closeVersionMenu(panelState);
       }
@@ -1401,32 +1399,33 @@ function closeVersionMenu(panelState) {
   sendToPanel(panelState, { type: "menu-state", open: false });
 }
 
-function openVersionMenu(panelState, current, siteKey) {
+/** Renders the options the frame computed (only version numbers and labels). */
+function openVersionMenu(panelState, options) {
   const { versionMenu, overlayDoc } = panelState;
-  if (!siteKey || !Number.isInteger(current)) return;
+  if (!Array.isArray(options) || !options.length) return;
   versionMenu.replaceChildren();
-  for (let version = 1; version <= current + 1; version += 1) {
+  for (const { version, note: noteText, selected } of options) {
+    if (!Number.isInteger(version)) continue;
     const item = overlayDoc.createElement("li");
     item.setAttribute("role", "presentation");
     const option = overlayDoc.createElement("button");
     option.type = "button";
     option.setAttribute("role", "option");
-    option.setAttribute("aria-selected", version === current ? "true" : "false");
+    option.setAttribute("aria-selected", selected ? "true" : "false");
     const label = overlayDoc.createElement("span");
     label.textContent = `v${version}`;
     option.append(label);
-    const noteText = version === current ? "current" : version === current + 1 ? "new" : "";
     if (noteText) {
       const note = overlayDoc.createElement("span");
       note.className = "hiz-pwd-version-note";
-      note.textContent = noteText;
+      note.textContent = String(noteText);
       option.append(note);
     }
     option.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
       closeVersionMenu(panelState);
-      sendToPanel(panelState, { type: "set-version", siteKey, version });
+      sendToPanel(panelState, { type: "set-version", version });
     });
     item.append(option);
     versionMenu.append(item);

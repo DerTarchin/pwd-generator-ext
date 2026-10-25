@@ -84,6 +84,27 @@ if (pageView.inDom) throw new Error("passphrase is visible in the page's DOM");
 if (pageView.frameReadable) throw new Error("page can read the panel frame's document");
 console.log("passphrase isolation ok: no page key events, not in page DOM, frame unreadable");
 
+// A masked text field (no password-field UI from Chrome or macOS), with every
+// hint against suggestions and learning; the fingerprint updates as you type.
+const field = await panelFrame(page).locator("#hiz-pwd-phrase").evaluate((el) => ({
+  type: el.type,
+  masked: getComputedStyle(el).webkitTextSecurity,
+  autocomplete: el.getAttribute("autocomplete"),
+  autocorrect: el.getAttribute("autocorrect"),
+  spellcheck: el.getAttribute("spellcheck"),
+  writingsuggestions: el.getAttribute("writingsuggestions"),
+  inForm: Boolean(el.closest("form")),
+  fingerprint: document.querySelector("#hiz-pwd-fingerprint path")?.getAttribute("d") ?? "",
+  kodeMono: [...document.fonts].some((f) => f.family.includes("Kode Mono") && f.status === "loaded"),
+}));
+if (field.type !== "text" || field.masked !== "disc" || field.autocomplete !== "off" || field.autocorrect !== "off"
+  || field.spellcheck !== "false" || field.writingsuggestions !== "false" || field.inForm) {
+  throw new Error(`passphrase field attributes: ${JSON.stringify(field)}`);
+}
+if (!field.fingerprint.startsWith("M")) throw new Error("fingerprint did not draw");
+if (!field.kodeMono) throw new Error("Kode Mono did not load in the panel");
+console.log("passphrase field ok: masked text, no suggestions or learning, fingerprint drawn, Kode Mono loaded");
+
 // Page scripts posting messages to the frame must not be able to drive it.
 await page.evaluate(() => {
   const frame = document.querySelector(".hiz-pwd-panel-host").shadowRoot.querySelector("iframe");
