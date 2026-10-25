@@ -1550,6 +1550,15 @@ function isAnchorVisible(anchor) {
   return isFieldVisible(anchor);
 }
 
+/**
+ * An anchor hidden on purpose (its panel is open) is still healthy. Without
+ * this, the reposition poll re-created it and the icon showed over the panel.
+ */
+function isAnchorHealthy(anchor) {
+  if (!(anchor instanceof HTMLElement) || !anchor.isConnected) return false;
+  return anchor.classList.contains("is-hidden") || isAnchorVisible(anchor);
+}
+
 function purgeStaleFieldAttachments() {
   for (const input of [...anchors.keys()]) {
     const anchor = anchors.get(input);
@@ -1557,7 +1566,7 @@ function purgeStaleFieldAttachments() {
       detachFromField(input);
       continue;
     }
-    if (!isFieldVisible(input) || !isAnchorVisible(anchor)) detachFromField(input);
+    if (!isFieldVisible(input) || !isAnchorHealthy(anchor)) detachFromField(input);
   }
   for (const [fieldId, input] of [...remoteInputs.entries()]) {
     if (!input.isConnected) {
@@ -1575,12 +1584,7 @@ function purgeStaleFieldAttachments() {
 function attachToField(input) {
   if (tracked.has(input)) {
     const anchor = anchors.get(input);
-    if (
-      input.isConnected &&
-      anchor?.isConnected &&
-      isFieldVisible(input) &&
-      isAnchorVisible(anchor)
-    ) {
+    if (input.isConnected && isFieldVisible(input) && isAnchorHealthy(anchor)) {
       return;
     }
     detachFromField(input);
