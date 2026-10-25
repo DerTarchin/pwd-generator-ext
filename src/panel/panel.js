@@ -13,6 +13,7 @@
 import { copyText } from "../lib/copy.js";
 import { generatePassword } from "../lib/crypto-client.js";
 import { PASSWORD_LENGTH } from "../lib/derive.js";
+import { startMatrixLoading, stopMatrixLoading } from "../lib/matrix-loading.js";
 import { getSiteVersion, setSiteVersion } from "../lib/site-versions.js";
 import { PANEL_PORT_PREFIX } from "../lib/panel-port.js";
 import { cleanHostInput, rowForInput } from "../lib/sites.js";
@@ -32,6 +33,7 @@ const errEl = document.querySelector("#hiz-pwd-err");
 let port = null;
 let deriveSerial = 0;
 let deriveTimer = 0;
+let matrixTimer = null;
 let copyTimer = 0;
 // The password for the current phrase, site, and version; "" while stale.
 let readyPassword = "";
@@ -143,6 +145,7 @@ function normalizeSiteElLabel() {
 }
 
 function displayedPasswordValue() {
+  if (outEl.classList.contains("is-matrix")) return "";
   const text = outEl.textContent?.trim() ?? "";
   return text.length === PASSWORD_LENGTH ? text : "";
 }
@@ -204,8 +207,26 @@ function markStale() {
   readyPassword = "";
 }
 
+function stopPasswordMatrix() {
+  stopMatrixLoading(matrixTimer);
+  matrixTimer = null;
+  outEl.classList.remove("is-matrix", "is-matrix-shimmer");
+}
+
+function startPasswordMatrix() {
+  stopPasswordMatrix();
+  setResultExpanded(true);
+  outEl.classList.add("is-pending", "is-matrix", "is-matrix-shimmer");
+  errEl.hidden = true;
+  matrixTimer = startMatrixLoading((text) => {
+    outEl.textContent = text;
+  });
+  reportMetrics();
+}
+
 function scheduleDerive() {
   window.clearTimeout(deriveTimer);
+  if (phraseEl.value.trim()) startPasswordMatrix();
   deriveTimer = window.setTimeout(() => {
     deriveTimer = 0;
     void runDerive();
@@ -224,6 +245,7 @@ async function runDerive() {
   markStale();
   const phrase = phraseEl.value;
   if (!phrase.trim()) {
+    stopPasswordMatrix();
     outEl.textContent = "";
     outEl.classList.add("is-pending");
     errEl.hidden = true;
@@ -231,12 +253,7 @@ async function runDerive() {
     return null;
   }
   const serial = ++deriveSerial;
-  if (displayedPasswordValue()) {
-    outEl.classList.remove("is-pending");
-  } else {
-    outEl.textContent = "";
-    outEl.classList.add("is-pending");
-  }
+  if (!matrixTimer?.rafId) startPasswordMatrix();
   errEl.hidden = true;
   try {
     const siteKey = siteKeyFromSiteEl();
@@ -249,6 +266,7 @@ async function runDerive() {
     const version = await refreshVersion();
     const password = await generatePassword(phrase, siteKey, version);
     if (serial !== deriveSerial) return null;
+    stopPasswordMatrix();
     outEl.textContent = password;
     outEl.classList.remove("is-pending");
     setResultExpanded(true);
@@ -256,6 +274,7 @@ async function runDerive() {
     return password;
   } catch (error) {
     if (serial !== deriveSerial) return null;
+    stopPasswordMatrix();
     outEl.textContent = "";
     outEl.classList.add("is-pending");
     errEl.hidden = false;
@@ -339,6 +358,7 @@ phraseEl.addEventListener("input", () => {
   unlockPhraseInput();
   markStale();
   if (!phraseEl.value.trim()) {
+    stopPasswordMatrix();
     outEl.textContent = "";
     outEl.classList.add("is-pending");
     errEl.hidden = true;

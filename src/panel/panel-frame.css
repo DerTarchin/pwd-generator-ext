@@ -130,7 +130,7 @@ label {
   display: flex;
   align-items: center;
   margin: 0.65rem 0 0;
-  min-height: 1.5rem;
+  min-height: 2.75rem;
 }
 
 .hiz-pwd-result.is-collapsed {
@@ -140,8 +140,13 @@ label {
 .hiz-pwd-password {
   flex: 1;
   min-width: 0;
+  min-height: 2.75rem;
   margin: 0;
   padding: 0.2rem var(--content-pad);
+  padding-right: calc(var(--content-pad) + 2.75rem);
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
   font-family: var(--mono);
   font-size: 0.8rem;
   letter-spacing: 0.03em;
@@ -159,12 +164,38 @@ label {
 }
 
 .hiz-pwd-password.is-pending {
-  color: #a8b6de;
-  font-family: inherit;
-  font-size: 0.85rem;
-  letter-spacing: 0;
   cursor: default;
   user-select: none;
+}
+
+.hiz-pwd-password.is-pending.is-matrix {
+  color: #a8b6de;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+}
+
+@keyframes hiz-pwd-matrix-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+.hiz-pwd-password.is-pending.is-matrix.is-matrix-shimmer {
+  color: transparent;
+  background: linear-gradient(
+    90deg,
+    #a8b6de 0%,
+    rgba(200, 212, 248, 0.92) 50%,
+    #a8b6de 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: hiz-pwd-matrix-shimmer 0.4s linear infinite;
 }
 
 .hiz-pwd-check {
@@ -174,6 +205,8 @@ label {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
   transform: translateY(-50%);
   pointer-events: none;
 }
