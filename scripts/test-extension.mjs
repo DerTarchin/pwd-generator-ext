@@ -60,6 +60,12 @@ await page.waitForFunction(
   },
   { timeout: 120000 },
 );
+await page.waitForTimeout(1200);
+if (await page.inputValue("#pw") !== "") {
+  throw new Error("password field was filled while typing; it should wait for Enter or a click outside");
+}
+// Click well away from the panel.
+await page.mouse.click(5, 5);
 await page.waitForFunction(
   (expected) => document.querySelector("#pw")?.value === expected,
   expectedPassword,
@@ -70,7 +76,34 @@ const password = await page.inputValue("#pw");
 if (password !== expectedPassword) {
   throw new Error(`fill mismatch: got ${password}, expected ${expectedPassword}`);
 }
-console.log("extension e2e ok", { siteKey: site.siteKey, filled: password.length });
+console.log("extension e2e ok: no fill while typing, click outside fills", { siteKey: site.siteKey, filled: password.length });
+
+// Clicking outside before the password has finished generating still fills it.
+await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
+await page.click(".hiz-pwd-anchor");
+await page.fill("#hiz-pwd-phrase", "test-passphrase");
+await page.mouse.click(5, 5);
+await page.waitForFunction(
+  (expected) => document.querySelector("#pw")?.value === expected,
+  expectedPassword,
+  { timeout: 15000 },
+);
+console.log("extension early click-outside ok");
+
+// Escape closes without filling.
+await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
+await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
+await page.click(".hiz-pwd-anchor");
+await page.fill("#hiz-pwd-phrase", "test-passphrase");
+await page.waitForFunction(() => document.querySelector(".hiz-pwd-panel-host")
+  ?.shadowRoot?.querySelector("#hiz-pwd-out")?.textContent?.length === 17, null, { timeout: 30000 });
+await page.focus("#hiz-pwd-phrase");
+await page.keyboard.press("Escape");
+await page.waitForFunction(() => !document.querySelector(".hiz-pwd-panel-host"), null, { timeout: 10000 });
+await page.waitForTimeout(500);
+if (await page.inputValue("#pw") !== "") throw new Error("Escape should close without filling");
+console.log("extension escape ok");
 
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: "domcontentloaded" });
 await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });

@@ -8,7 +8,7 @@
     "build": "node scripts/build.mjs",
     "package": "node scripts/package.mjs",
     "store-assets": "node scripts/build.mjs && node scripts/generate-store-assets.mjs",
-    "test": "node scripts/build.mjs && node scripts/test-catalog.mjs && node scripts/test-crypto.mjs && node scripts/test-extension.mjs && node scripts/test-username-pair.mjs",
+    "test": "node scripts/build.mjs && node scripts/test-catalog.mjs && node scripts/test-crypto.mjs && node scripts/test-extension.mjs && node scripts/test-username-pair.mjs && node scripts/test-version.mjs",
     "test:animation": "node scripts/build.mjs && node scripts/test-panel-animation.mjs",
     "test:site-motion": "node scripts/build.mjs && node scripts/test-site-motion.mjs",
     "test:schwab": "node scripts/build.mjs && node scripts/test-schwab.mjs",

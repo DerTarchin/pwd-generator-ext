@@ -1,6 +1,7 @@
 import { copyText } from "../lib/copy.js";
 import { generatePassword } from "../lib/crypto-client.js";
 import { PASSWORD_LENGTH } from "../lib/derive.js";
+import { getSiteVersion, setSiteVersion } from "../lib/site-versions.js";
 import { resolveSiteFromHostname } from "../lib/site-resolve.js";
 import { cleanHostInput, rowForInput } from "../lib/sites.js";
 import {
@@ -17,7 +18,8 @@ const PANEL_PAD = 16;
 const INPUT_MIN_W = 225;
 const INPUT_MAX_W = 500;
 const COPY_FEEDBACK_MS = 2000;
-const APPLY_IDLE_MS = 500;
+/** Argon2id at 64 MiB takes a noticeable moment; derive once typing pauses. */
+const DERIVE_IDLE_MS = 250;
 const POSITION_POLL_MS = 100;
 /** ~30% faster than the original 380ms enter. */
 const PANEL_ENTER_MOTION_MS = 292;
@@ -884,7 +886,7 @@ function bindPanelDismiss(panel) {
 function destroyPanel(panel) {
   window.clearTimeout(panel.enterEndTimer);
   window.clearTimeout(panel.heightSyncTimer);
-  window.clearTimeout(panel.applyDebounceTimer);
+  window.clearTimeout(panel.deriveTimer);
   window.clearTimeout(closePanelTimer);
   cancelPanelAnimations(panel.root);
   unbindPanelDismiss(panel);
@@ -1111,16 +1113,27 @@ function openForField(input, options = {}) {
         data-bwignore
         readonly
       />
-      <div
-        class="hiz-pwd-site"
-        id="hiz-pwd-site"
-        contenteditable="true"
-        spellcheck="false"
-        autocorrect="off"
-        autocapitalize="off"
-        role="textbox"
-        aria-label="Site"
-      ></div>
+      <div class="hiz-pwd-site-row">
+        <div
+          class="hiz-pwd-site"
+          id="hiz-pwd-site"
+          contenteditable="true"
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+          role="textbox"
+          aria-label="Site"
+        ></div>
+        <button
+          class="hiz-pwd-version"
+          id="hiz-pwd-version"
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded="false"
+          aria-controls="hiz-pwd-version-menu"
+          aria-label="Password version 1"
+        >v1</button>
+      </div>
       <div class="hiz-pwd-result is-collapsed" id="hiz-pwd-result">
         <p class="hiz-pwd-password is-pending" id="hiz-pwd-out" aria-live="polite"></p>
         <span class="hiz-pwd-check" id="hiz-pwd-check" hidden>${CHECKMARK_SVG}</span>
@@ -1129,6 +1142,14 @@ function openForField(input, options = {}) {
     </form>
   `;
   shadow.appendChild(root);
+  // Outside the panel root, which clips its overflow.
+  const versionMenu = overlayDoc.createElement("ul");
+  versionMenu.className = "hiz-pwd-version-menu";
+  versionMenu.id = "hiz-pwd-version-menu";
+  versionMenu.setAttribute("role", "listbox");
+  versionMenu.setAttribute("aria-label", "Password version");
+  versionMenu.hidden = true;
+  shadow.appendChild(versionMenu);
   getOverlayForDoc(overlayDoc, mountRoot).appendChild(host);
 
   const labelEl = root.querySelector("label");
@@ -1138,6 +1159,7 @@ function openForField(input, options = {}) {
   const outEl = root.querySelector("#hiz-pwd-out");
   const checkEl = root.querySelector("#hiz-pwd-check");
   const errEl = root.querySelector("#hiz-pwd-err");
+  const versionBtn = root.querySelector("#hiz-pwd-version");
   siteEl.textContent = site.siteName;
 
   let lastApplied = "";
@@ -1153,8 +1175,10 @@ function openForField(input, options = {}) {
     resultExpanded: false,
     heightSyncTimer: 0,
     heightAnimating: false,
-    applyDebounceTimer: 0,
-    pendingApplyPassword: "",
+    deriveTimer: 0,
+    // The password for the current phrase, site, and version; "" while stale.
+    readyPassword: "",
+    applyOnDismiss: null,
     checkEl,
     copyTimer: 0,
     overlayDoc,
@@ -1169,20 +1193,13 @@ function openForField(input, options = {}) {
     getSiteKey: () => siteKeyFromSiteEl(siteEl),
   };
 
-  function scheduleApplyPassword(panelState, password) {
-    panelState.pendingApplyPassword = password;
-    window.clearTimeout(panelState.applyDebounceTimer);
-    panelState.applyDebounceTimer = window.setTimeout(() => {
-      void flushApplyPassword(panelState);
-    }, APPLY_IDLE_MS);
-  }
-
   function displayedPasswordValue(el) {
     const text = el.textContent?.trim() ?? "";
     return text.length === PASSWORD_LENGTH ? text : "";
   }
 
-  async function flushApplyPassword(panelState, password = panelState.pendingApplyPassword) {
+  /** Fills the page's password field (and copies). Only on Enter or a click outside. */
+  async function flushApplyPassword(panelState, password) {
     if (!password || password === lastApplied) return;
     lastApplied = password;
     const { input, remote } = panelState;
@@ -1201,14 +1218,113 @@ function openForField(input, options = {}) {
     }
   }
 
+  let versionKey = "";
+  let versionValue = 1;
+
+  async function refreshVersion() {
+    const siteKey = siteKeyFromSiteEl(siteEl);
+    const version = await getSiteVersion(siteKey);
+    if (siteKeyFromSiteEl(siteEl) !== siteKey) return versionValue;
+    versionKey = siteKey;
+    versionValue = version;
+    versionBtn.textContent = `v${version}`;
+    versionBtn.disabled = !siteKey;
+    versionBtn.setAttribute("aria-label", `Password version ${version}`);
+    return version;
+  }
+
+  function positionVersionMenu() {
+    if (versionMenu.hidden) return;
+    const btn = versionBtn.getBoundingClientRect();
+    const hostBox = host.getBoundingClientRect();
+    const height = versionMenu.offsetHeight;
+    const { vh } = overlayViewportSize(overlayWin);
+    const fitsBelow = btn.bottom + 6 + height <= vh - 4;
+    versionMenu.style.left = `${btn.right - hostBox.left}px`;
+    versionMenu.style.top = fitsBelow
+      ? `${btn.bottom - hostBox.top + 6}px`
+      : `${btn.top - hostBox.top - 6 - height}px`;
+  }
+
+  function closeVersionMenu() {
+    if (versionMenu.hidden) return;
+    versionMenu.hidden = true;
+    versionBtn.setAttribute("aria-expanded", "false");
+  }
+
+  async function openVersionMenu() {
+    const current = await refreshVersion();
+    const siteKey = versionKey;
+    if (!siteKey) return;
+    versionMenu.replaceChildren();
+    for (let version = 1; version <= current + 1; version += 1) {
+      const item = overlayDoc.createElement("li");
+      item.setAttribute("role", "presentation");
+      const option = overlayDoc.createElement("button");
+      option.type = "button";
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", version === current ? "true" : "false");
+      const label = overlayDoc.createElement("span");
+      label.textContent = `v${version}`;
+      option.append(label);
+      const noteText = version === current ? "current" : version === current + 1 ? "new" : "";
+      if (noteText) {
+        const note = overlayDoc.createElement("span");
+        note.className = "hiz-pwd-version-note";
+        note.textContent = noteText;
+        option.append(note);
+      }
+      option.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void chooseVersion(siteKey, version);
+      });
+      item.append(option);
+      versionMenu.append(item);
+    }
+    versionMenu.hidden = false;
+    versionBtn.setAttribute("aria-expanded", "true");
+    positionVersionMenu();
+  }
+
+  async function chooseVersion(siteKey, version) {
+    closeVersionMenu();
+    if (siteKeyFromSiteEl(siteEl) !== siteKey) return;
+    if (version !== versionValue) await setSiteVersion(siteKey, version);
+    await refreshVersion();
+    clearCopyCheck(panelState);
+    void runDerive();
+  }
+
+  function scheduleDerive() {
+    window.clearTimeout(panelState.deriveTimer);
+    panelState.deriveTimer = window.setTimeout(() => {
+      panelState.deriveTimer = 0;
+      void runDerive();
+    }, DERIVE_IDLE_MS);
+  }
+
+  function markStale() {
+    panelState.readyPassword = "";
+  }
+
+  /** The current password, deriving now if typing has not settled yet. */
+  function currentPassword() {
+    if (panelState.readyPassword && !panelState.deriveTimer) {
+      return Promise.resolve(panelState.readyPassword);
+    }
+    return runDerive();
+  }
+
   async function runDerive() {
+    window.clearTimeout(panelState.deriveTimer);
+    panelState.deriveTimer = 0;
+    markStale();
     const phrase = phraseEl.value;
     if (!phrase.trim()) {
       outEl.textContent = "";
       outEl.classList.add("is-pending");
       errEl.hidden = true;
-      panelState.pendingApplyPassword = "";
-      window.clearTimeout(panelState.applyDebounceTimer);
       lastApplied = "";
       setResultExpanded(panelState, false);
       return null;
@@ -1229,12 +1345,13 @@ function openForField(input, options = {}) {
         finishPanelHeightLayout(panelState);
         return null;
       }
-      const password = await generatePassword(phrase, siteKey);
+      const version = await refreshVersion();
+      const password = await generatePassword(phrase, siteKey, version);
       if (serial !== deriveSerial) return null;
       outEl.textContent = password;
       outEl.classList.remove("is-pending");
       setResultExpanded(panelState, true);
-      scheduleApplyPassword(panelState, password);
+      panelState.readyPassword = password;
       return password;
     } catch (error) {
       if (serial !== deriveSerial) return null;
@@ -1248,8 +1365,7 @@ function openForField(input, options = {}) {
   }
 
   async function applyAndCloseFromEnter() {
-    window.clearTimeout(panelState.applyDebounceTimer);
-    const password = await runDerive();
+    const password = await currentPassword();
     if (!password) return;
     await flushApplyPassword(panelState, password);
     closePanel();
@@ -1269,7 +1385,6 @@ function openForField(input, options = {}) {
     event.preventDefault();
     event.stopPropagation();
     normalizeSiteElLabel(siteEl);
-    window.clearTimeout(panelState.applyDebounceTimer);
     if (!phraseEl.value.trim()) {
       unlockPhraseInput(phraseEl);
       phraseEl.focus({ preventScroll: true });
@@ -1285,6 +1400,8 @@ function openForField(input, options = {}) {
     const cleaned = cleanHostInput(pasted) || pasted.replace(/\s+/g, " ").trim();
     siteEl.textContent = cleaned;
     normalizeSiteElLabel(siteEl);
+    closeVersionMenu();
+    void refreshVersion();
     if (!panelState.enterAnimating && !panelState.heightAnimating) {
       root.style.transition = "none";
       layoutPanel(host, root, phraseEl, getRect, overlayWin);
@@ -1294,30 +1411,70 @@ function openForField(input, options = {}) {
 
   siteEl.addEventListener("input", () => {
     clearCopyCheck(panelState);
+    closeVersionMenu();
+    markStale();
     if (!panelState.enterAnimating && !panelState.heightAnimating) {
       root.style.transition = "none";
       layoutPanel(host, root, phraseEl, getRect, overlayWin);
     }
-    void runDerive();
+    void refreshVersion();
+    scheduleDerive();
   });
 
   siteEl.addEventListener("blur", () => {
     normalizeSiteElLabel(siteEl);
+    void refreshVersion();
+  });
+
+  versionBtn.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (versionMenu.hidden) void openVersionMenu();
+    else closeVersionMenu();
+  });
+
+  versionBtn.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown") return;
+    event.preventDefault();
+    event.stopPropagation();
+    void openVersionMenu().then(() => versionMenu.querySelector('[aria-selected="true"]')?.focus());
+  });
+
+  versionMenu.addEventListener("keydown", (event) => {
+    const options = [...versionMenu.querySelectorAll("button")];
+    const index = options.indexOf(shadow.activeElement);
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeVersionMenu();
+      versionBtn.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      options[(index + step + options.length) % options.length]?.focus();
+    }
+  });
+
+  root.addEventListener("click", (event) => {
+    if (!event.composedPath().includes(versionBtn)) closeVersionMenu();
   });
 
   phraseEl.addEventListener("input", () => {
     clearCopyCheck(panelState);
     unlockPhraseInput(phraseEl);
+    markStale();
     if (!phraseEl.value.trim()) {
       outEl.textContent = "";
       outEl.classList.add("is-pending");
       errEl.hidden = true;
       lastApplied = "";
-      panelState.pendingApplyPassword = "";
-      window.clearTimeout(panelState.applyDebounceTimer);
+      window.clearTimeout(panelState.deriveTimer);
+      panelState.deriveTimer = 0;
       setResultExpanded(panelState, false);
+      return;
     }
-    void runDerive();
+    scheduleDerive();
   });
 
   phraseEl.addEventListener("keydown", (event) => {
@@ -1349,14 +1506,23 @@ function openForField(input, options = {}) {
     }
   });
 
+  // Clicking outside the panel fills the field too; Escape closes without filling.
+  panelState.applyOnDismiss = async () => {
+    if (!phraseEl.value.trim()) return;
+    const password = await currentPassword();
+    if (password) await flushApplyPassword(panelState, password);
+  };
+
   panelState.reposition = () => {
     if (panelState.enterAnimating || panelState.heightAnimating) return;
     root.style.transition = "none";
     layoutPanel(host, root, phraseEl, getRect, overlayWin);
+    positionVersionMenu();
   };
   host.addEventListener("mousedown", (event) => event.stopPropagation(), true);
   host.addEventListener("pointerdown", (event) => event.stopPropagation(), true);
 
+  void refreshVersion();
   openPanel = panelState;
   panelState.enterAnimating = true;
   panelState.closing = false;
@@ -1464,7 +1630,9 @@ function onPanelDismiss(event) {
   if (anchor && path.includes(anchor)) return;
   event.preventDefault();
   event.stopPropagation();
+  const panel = openPanel;
   closePanel();
+  void panel.applyOnDismiss?.();
 }
 if (isTopWindow()) installTopBridge();
 scan();

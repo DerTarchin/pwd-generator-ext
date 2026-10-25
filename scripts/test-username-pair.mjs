@@ -54,6 +54,7 @@ await page.waitForSelector(".hiz-pwd-anchor", { timeout: 15000 });
 await page.fill("#email", testEmail);
 await page.click(".hiz-pwd-anchor");
 await page.fill("#hiz-pwd-phrase", "test-passphrase");
+await page.mouse.click(5, 5);
 await page.waitForFunction(
   (expected) => document.querySelector("#pw")?.value === expected,
   expectedPassword,

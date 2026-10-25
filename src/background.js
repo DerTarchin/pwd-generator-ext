@@ -67,7 +67,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   if (message?.type !== GENERATE_MSG) return false;
-  generatePassword(message.passphrase, message.siteKey)
+  generatePassword(message.passphrase, message.siteKey, message.version)
     .then((password) => sendResponse({ ok: true, password }))
     .catch((error) =>
       sendResponse({

@@ -74,6 +74,13 @@ await page.waitForFunction(
   { timeout: 120000 },
 );
 
+// The field fills on Enter or a click outside the panel, never while typing.
+await page.mouse.click(5, 5);
+await targetPage.waitForFunction(
+  (expected) => document.querySelector('input[type="password"]')?.value === expected,
+  expectedPassword,
+  { timeout: 15000 },
+).catch(() => {});
 const filled = await targetPage.inputValue('input[type="password"]');
 if (filled !== expectedPassword) {
   throw new Error(`Schwab fill mismatch: got ${filled.length} expected ${expectedPassword.length}`);

@@ -76,13 +76,14 @@ const result = {
   expected: expectedPassword,
   clipboardAfterDerive,
   clipboardAfterClick,
-  deriveOk: clipboardAfterDerive === expectedPassword,
+  // Typing no longer copies; only clicking the password (or Enter / click outside) does.
+  typingDidNotCopy: clipboardAfterDerive !== expectedPassword,
   clickOk: clipboardAfterClick === expectedPassword,
 };
 console.log(result);
 
-if (!result.deriveOk && !result.clickOk) {
-  throw new Error(`Chase clipboard copy failed: ${JSON.stringify(result)}`);
+if (!result.clickOk || !result.typingDidNotCopy) {
+  throw new Error(`Chase clipboard check failed: ${JSON.stringify(result)}`);
 }
 
 console.log("chase clipboard ok");
