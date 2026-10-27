@@ -4,7 +4,7 @@
  * extension (pwd-generator-ext/src/lib/derive.js).
  *
  * masterKey = Argon2id(
- *   password = NFC(passphrase),
+ *   password = toLowerCase(NFC(passphrase)),
  *   salt     = "hiz.al/pwd.v2!!!"  // 16 bytes, public on purpose
  *   m = 65536 KiB (64 MiB), t = 3, p = 1, 32-byte tag
  * )
@@ -66,12 +66,16 @@ export function normalizeSiteVersion(value) {
   return version;
 }
 
+export function normalizePassphrase(passphrase) {
+  return String(passphrase ?? "").normalize("NFC").toLowerCase();
+}
+
 export async function deriveMasterKey(passphrase, argon2id) {
   const fn = argon2id || globalThis.hashwasm?.argon2id;
   if (!fn) {
     throw new Error("Argon2id is unavailable in this browser");
   }
-  const phrase = String(passphrase ?? "").normalize("NFC");
+  const phrase = normalizePassphrase(passphrase);
   if (!phrase) {
     throw new Error("Passphrase is empty");
   }

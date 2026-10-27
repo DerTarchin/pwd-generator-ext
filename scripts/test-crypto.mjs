@@ -1,5 +1,5 @@
 import { generatePassword } from "../src/lib/crypto.js";
-import { KDF } from "../src/lib/derive.js";
+import { KDF, normalizePassphrase } from "../src/lib/derive.js";
 
 // Same vectors as hiz.al/pwd/scripts/test-derive.mjs. If these differ, the
 // extension and the web app give different passwords.
@@ -21,5 +21,11 @@ for (const [phrase, site, version, expected] of VECTORS) {
 }
 if (await generatePassword("test-passphrase", "amazon") !== VECTORS[0][3]) {
   throw new Error("version should default to 1");
+}
+if (normalizePassphrase("Test-Passphrase") !== "test-passphrase") {
+  throw new Error("normalizePassphrase should lowercase after NFC");
+}
+if (await generatePassword("Test-Passphrase", "amazon", 1) !== VECTORS[0][3]) {
+  throw new Error("passphrase case should not change the generated password");
 }
 console.log("crypto ok", `${VECTORS.length} vectors match the web app`);
