@@ -10,9 +10,10 @@ const catalogJson = join(catalogRoot, "catalog.json");
 const registrySrc = join(catalogRoot, "site-registry.js");
 const fingerprintSrc = join(catalogRoot, "passphrase-fingerprint.js");
 const deriveSrc = join(catalogRoot, "derive.js");
+const siteRequirementsSrc = join(catalogRoot, "site-requirements.js");
 const fontSrc = join(catalogRoot, "fonts/kode-mono-latin-wght-normal.woff2");
 
-for (const shared of [catalogJson, registrySrc, fingerprintSrc, deriveSrc, fontSrc]) {
+for (const shared of [catalogJson, registrySrc, fingerprintSrc, deriveSrc, siteRequirementsSrc, fontSrc]) {
   if (!existsSync(shared)) {
     throw new Error(`Missing shared file from the site checkout: ${shared}`);
   }
@@ -22,6 +23,7 @@ copyFileSync(catalogJson, join(root, "src/lib/catalog-fallback.json"));
 copyFileSync(registrySrc, join(root, "src/lib/site-registry.js"));
 copyFileSync(fingerprintSrc, join(root, "src/lib/passphrase-fingerprint.js"));
 copyFileSync(deriveSrc, join(root, "src/lib/derive.js"));
+copyFileSync(siteRequirementsSrc, join(root, "src/lib/site-requirements.js"));
 
 // Start clean so a stale file never ships in an unpacked build.
 rmSync(dist, { recursive: true, force: true });

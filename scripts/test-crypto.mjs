@@ -8,6 +8,7 @@ const VECTORS = [
   ["test-passphrase", "amazon", 2, "08MQKwQCHVr!F1sdJ"],
   ["test-passphrase", "wells fargo", 1, "lS7o!ftVoC7aSzYEH"],
   ["correct horse battery staple", "chase", 1, "Sz2MQ2CYC!FZvoLdc"],
+  ["test-passphrase", "pnc", 1, "Kb7pe)n*1Od6kJGPO"],
 ];
 
 if (KDF.memorySize !== 65536 || KDF.iterations !== 3) {

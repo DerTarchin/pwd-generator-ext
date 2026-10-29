@@ -2,7 +2,7 @@
   "name": "pwd-generator-ext",
   "private": true,
   "type": "module",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Chrome extension for hiz.al deterministic passwords",
   "scripts": {
     "build": "node scripts/build.mjs",

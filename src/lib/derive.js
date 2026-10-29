@@ -16,7 +16,8 @@
  *                        salt = 32 zero bytes,
  *                        info = "password-v2:" + version + ":" + siteKey)
  * password = encode(stream)
- *   17 characters, at least one upper, one lower, one digit, and one "!".
+ *   Default: 17 characters, at least one upper, one lower, one digit, and one "!".
+ *   PNC (site key pnc): same length; see site-requirements.js and encodePasswordPnc.
  *
  * version is the per-site counter (1, 2, 3, ...). Raising it gives one site a
  * new password without touching the others.
@@ -25,6 +26,13 @@
  * up, it reads a longer HKDF output, which starts with the same bytes, so the
  * result is the same as if the stream had been longer from the start.
  */
+
+import {
+  PNC_CHARSET,
+  PNC_PASSWORD_LENGTH,
+  canPlacePncChar,
+  isValidPncPassword,
+} from "./site-requirements.js";
 
 export const FORMAT_VERSION = 2;
 export const APP_SALT = "hiz.al/pwd.v2!!!";
@@ -95,25 +103,31 @@ export async function passwordFromMaster(masterKey, siteKey, version = DEFAULT_S
   const counter = normalizeSiteVersion(version);
   const key = await crypto.subtle.importKey("raw", masterKey, "HKDF", false, ["deriveBits"]);
   const info = new TextEncoder().encode(`password-v2:${counter}:${siteKey}`);
+  const encoder = encoderForSite(siteKey);
   return encodeFromStream(async (length) => new Uint8Array(await crypto.subtle.deriveBits(
     { name: "HKDF", hash: "SHA-256", salt: HKDF_SALT, info },
     key,
     length * 8,
-  )));
+  )), encoder);
 }
 
 /**
  * readStream(length) must return the first `length` bytes of one fixed
  * stream. Starts at 64 bytes and doubles only if the encoder runs out.
  */
-export async function encodeFromStream(readStream) {
+export async function encodeFromStream(readStream, encode = encodePassword) {
   for (let length = STREAM_BYTES; ; length = Math.min(length * 2, MAX_STREAM_BYTES)) {
     try {
-      return encodePassword(await readStream(length));
+      return encode(await readStream(length));
     } catch (error) {
       if (!(error instanceof EntropyExhaustedError) || length === MAX_STREAM_BYTES) throw error;
     }
   }
+}
+
+function encoderForSite(siteKey) {
+  if (String(siteKey ?? "").toLowerCase() === "pnc") return encodePasswordPnc;
+  return encodePassword;
 }
 
 /** Pure function of the stream bytes; throws EntropyExhaustedError if they run out. */
@@ -138,6 +152,45 @@ export function encodePassword(streamBytes) {
     if (!chars[i]) chars[i] = ALNUM[src.next(ALNUM.length)];
   }
   return chars.join("");
+}
+
+/** PNC: 8–20 chars; letter + digit; no forbidden specials; max two identical in a row. */
+export function encodePasswordPnc(streamBytes) {
+  if (!(streamBytes instanceof Uint8Array) || streamBytes.length < 32) {
+    throw new Error("Expected at least 32 stream bytes");
+  }
+  const src = bitSource(streamBytes);
+  const length = PNC_PASSWORD_LENGTH;
+  const positions = Array.from({ length }, (_, i) => i);
+  for (let i = positions.length - 1; i > 0; i -= 1) {
+    const j = src.next(i + 1);
+    const swap = positions[i];
+    positions[i] = positions[j];
+    positions[j] = swap;
+  }
+  const chars = new Array(length).fill("");
+  const required = [
+    [positions[0], LOWER],
+    [positions[1], UPPER],
+    [positions[2], DIGIT],
+  ];
+  for (const [index, alphabet] of required) {
+    chars[index] = pickPncChar(src, alphabet, chars, index);
+  }
+  for (let i = 0; i < length; i += 1) {
+    if (!chars[i]) chars[i] = pickPncChar(src, PNC_CHARSET, chars, i);
+  }
+  const password = chars.join("");
+  if (!isValidPncPassword(password)) throw new EntropyExhaustedError();
+  return password;
+}
+
+function pickPncChar(src, alphabet, chars, index) {
+  for (let attempt = 0; attempt < 512; attempt += 1) {
+    const ch = alphabet[src.next(alphabet.length)];
+    if (canPlacePncChar(chars, index, ch)) return ch;
+  }
+  throw new EntropyExhaustedError();
 }
 
 function bitsFor(mod) {
